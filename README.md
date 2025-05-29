@@ -1,4 +1,4 @@
-# ⚔️ MRKT [@mrkt](https://t.me/mrkt/app?startapp=252453226)
+# 🛍️ MRKT [@mrkt](https://t.me/mrkt/app?startapp=252453226)
 
 [![Market](https://res.cloudinary.com/dkgz59pmw/image/upload/v1736756459/knpk224-28px-market_ksivis.svg)](https://t.me/MaineMarketBot?start=8HVF7S9K)
 [![Channel](https://res.cloudinary.com/dkgz59pmw/image/upload/v1736756459/knpk224-28px-channel_psjoqn.svg)](https://t.me/+vpXdTJ_S3mo0ZjIy)
@@ -42,8 +42,8 @@
 ### Быстрый старт
 
 ```bash
-git clone https://github.com/mainiken/ton_kombat.git
-cd ton_kombat
+git clone https://github.com/mainiken/mrkt.git
+cd mrkt
 pip install -r requirements.txt
 ```
 
