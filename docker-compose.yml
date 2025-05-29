@@ -1,0 +1,10 @@
+services:
+  bot:
+    container_name: 'mrkt'
+    build:
+      context: .
+    stop_signal: SIGINT
+    restart: unless-stopped
+    command: "python3 main.py -a 1"
+    volumes:
+      - .:/app
