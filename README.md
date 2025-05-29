@@ -4,7 +4,7 @@
 [![Channel](https://res.cloudinary.com/dkgz59pmw/image/upload/v1736756459/knpk224-28px-channel_psjoqn.svg)](https://t.me/+vpXdTJ_S3mo0ZjIy)
 [![Chat](https://res.cloudinary.com/dkgz59pmw/image/upload/v1736756459/knpk224-28px-chat_ixoikd.svg)](https://t.me/+wWQuct9bljQ0ZDA6)
 
-> **Автоматизированный бот для игры [Ton Kombat](https://t.me/Ton_kombat_bot/app?startapp=252453226) в Telegram**
+> **Автоматизированный бот для [@mrkt](https://t.me/mrkt/app?startapp=252453226) в Telegram**
 
 ---
 
