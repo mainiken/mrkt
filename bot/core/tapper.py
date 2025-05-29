@@ -451,7 +451,7 @@ class GiveawayProcessor:
                 await self._process_giveaway(giveaway)
                 await self._bot._random_delay()
 
-            sleep_duration = random.uniform(settings.SESSION_START_DELAY, settings.SESSION_START_DELAY + 5)
+            sleep_duration = random.uniform(1, settings.SESSION_START_DELAY)
             self._bot._log('info', f' Пауза между розыгрышами: 💤 <r>{sleep_duration:.2f} сек.</r>', 'info')
             await asyncio.sleep(sleep_duration)
 
