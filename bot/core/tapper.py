@@ -8,6 +8,7 @@ from urllib.parse import unquote
 from bot.config.config import settings
 from bot.utils import logger
 from bot.utils.first_run import check_is_first_run, append_recurring_session
+from bot.utils.updater import UpdateManager
 
 
 class BaseBot:
@@ -465,6 +466,12 @@ class GiveawayProcessor:
 async def run_tapper(tg_client: Any) -> None:
     bot = BaseBot(tg_client)
 
+    update_task = None
+    if settings.AUTO_UPDATE:
+        update_manager = UpdateManager()
+        update_task = asyncio.create_task(update_manager.run())
+        bot._log('info', 'Задача автоматического обновления запущена.', 'info')
+
     sleep_duration = random.uniform(1, settings.SESSION_START_DELAY)
     bot._log('info', f' Сессия запустится через ⌚ <g>{int(sleep_duration)} секунд...</g>', 'info')
     await asyncio.sleep(sleep_duration)
@@ -504,4 +511,10 @@ async def run_tapper(tg_client: Any) -> None:
         bot._log('error', f'Критическая ошибка в процессе выполнения: {e}', 'error')
     finally:
         bot._log('info', ' Завершение функции run_tapper.', 'info')
+        if update_task:
+            update_task.cancel()
+            try:
+                await update_task
+            except asyncio.CancelledError:
+                bot._log('info', 'Задача автоматического обновления отменена.', 'info')
         await bot.close()
