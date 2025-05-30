@@ -340,7 +340,7 @@ class GiveawayProcessor:
                 return False
 
             self._bot._log('info', f' Вступление в канал <y>{channel_name}</y> успешно.', 'success')
-            await self._bot._random_delay()
+            self._bot._log('debug', f'Ожидание после вступления в канал согласно настройкам: {settings.CHANNEL_SUBSCRIBE_DELAY} сек.', 'info')
 
             start_validation_result = await self._bot.start_giveaway_validation(
                 giveaway_id, channel_name, "ChannelMember"

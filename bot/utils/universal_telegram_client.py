@@ -486,6 +486,7 @@ class UniversalTelegramClient:
             if not was_connected and (self.client.is_connected if not self.is_pyrogram else self.client.is_connected):
                 await self.client.disconnect()
                 
+        await asyncio.sleep(settings.CHANNEL_SUBSCRIBE_DELAY)
         return False
 
     async def _telethon_mute_and_archive_channel(self, channel_id: int) -> None:

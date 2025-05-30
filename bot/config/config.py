@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     
     SUBSCRIBE_TELEGRAM: bool = True
 
+    # Настройки задержки между подписками на каналы
+    CHANNEL_SUBSCRIBE_DELAY: int = 10
+
     # Настройки для участия в бесплатных розыгрышах
     PARTICIPATE_IN_FREE_GIVEAWAYS: bool = True
     GIVEAWAY_MIN_PARTICIPANTS: int = 0

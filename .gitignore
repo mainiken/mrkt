@@ -1,0 +1,25 @@
+*.log
+*.tmp
+
+# Игнорировать файл .env
+.env
+
+# Игнорировать файлов
+first_run.txt
+
+# Игнорировать папки целиком
+sessions/
+venv/
+logs/
+.cursor/
+__pycache__/
+lock_files/
+
+# Игнорировать файл accounts_config.json в папке bot/config
+bot/config/accounts_config.json
+
+# Игнорировать папку build внутри bot/core
+bot/core/build/
+
+* text=auto
+
