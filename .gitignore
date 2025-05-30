@@ -22,4 +22,5 @@ bot/config/accounts_config.json
 bot/core/build/
 
 * text=auto
+bot/config/proxies.txt
 
