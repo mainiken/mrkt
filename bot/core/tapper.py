@@ -452,8 +452,8 @@ class GiveawayProcessor:
                 await self._process_giveaway(giveaway)
                 await self._bot._random_delay()
 
-            sleep_duration = random.uniform(1, settings.SESSION_START_DELAY)
-            self._bot._log('info', f' Пауза между розыгрышами: 💤 <r>{sleep_duration:.2f} сек.</r>', 'info')
+            sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 300)
+            self._bot._log('info', f'Уход на паузу перед следующим циклом на {int(sleep_duration)} секунд...', 'info')
             await asyncio.sleep(sleep_duration)
 
         except Exception as e:
@@ -498,7 +498,7 @@ async def run_tapper(tg_client: Any) -> None:
                 giveaway_processor = GiveawayProcessor(bot)
                 await giveaway_processor.process_giveaways()
 
-                sleep_duration = random.uniform(0, 36)
+                sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 300)
                 bot._log('info', f'Уход на паузу перед следующим циклом на {int(sleep_duration)} секунд...', 'info')
                 await asyncio.sleep(sleep_duration)
 
