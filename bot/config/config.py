@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     NOTIFICATION_BOT_TOKEN: Optional[str] = None
     NOTIFICATION_CHAT_ID: Optional[int] = None
 
+    ENABLE_NOTIFICATION_BOT: bool = False
+
     @property
     def blacklisted_sessions(self) -> List[str]:
         return [s.strip() for s in self.BLACKLISTED_SESSIONS.split(',') if s.strip()]

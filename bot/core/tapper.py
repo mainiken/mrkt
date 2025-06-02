@@ -9,7 +9,6 @@ from bot.config.config import settings
 from bot.utils import logger
 from bot.utils.first_run import check_is_first_run, append_recurring_session
 from bot.utils.updater import UpdateManager
-from bot.utils.notification_bot import NotificationBot
 from bot.exceptions.error_handler import ErrorHandler
 
 
@@ -324,6 +323,34 @@ class BaseBot:
         self._log('debug', f'Добавление случайной задержки: {delay:.2f} сек.', 'info')
         await asyncio.sleep(delay)
 
+    async def _send_telegram_message(self, chat_id: str, message: str) -> bool:
+        """Отправляет сообщение в Telegram чат."""
+        if not settings.NOTIFICATION_BOT_TOKEN:
+            self._log('debug', 'Токен для уведомлений Telegram не настроен.', 'warning')
+            return False
+
+        client = await self._get_http_client()
+        url = f'https://api.telegram.org/bot{settings.NOTIFICATION_BOT_TOKEN}/sendMessage'
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': 'MarkdownV2'
+        }
+        headers = {'Content-Type': 'application/json'}
+
+        try:
+            async with client.post(url, json=payload, headers=headers) as resp:
+                if resp.status == 200:
+                    self._log('debug', 'Сообщение в Telegram успешно отправлено.', 'success')
+                    return True
+                else:
+                    response_text = await resp.text()
+                    self._log('error', f'Ошибка при отправке сообщения в Telegram: {resp.status} {response_text}', 'error')
+                    return False
+        except Exception as e:
+            self._log('error', f'Исключение при отправке сообщения в Telegram: {e}', 'error')
+            return False
+
 
 class GiveawayProcessor:
     def __init__(self, bot: BaseBot):
@@ -524,12 +551,6 @@ async def run_tapper(tg_client: Any) -> None:
     try:
         await bot.auth()
 
-        # Отправка уведомления о запуске здесь, после успешной авторизации
-        notification_bot = NotificationBot(settings.NOTIFICATION_BOT_TOKEN, settings.NOTIFICATION_CHAT_ID)
-        сообщение_о_запуске = "Программа успешно запущена"
-        await notification_bot.send_message(сообщение_о_запуске)
-        bot._log('info', 'Уведомление о запуске отправлено.', 'info')
-
         while True:
             try:
                 bot._log('debug', 'Получение информации профиля...', 'info')
@@ -549,10 +570,8 @@ async def run_tapper(tg_client: Any) -> None:
                 # Отправляем уведомление, если подарки найдены
                 if gifts_data.get("gifts"):
                     session_name = getattr(tg_client, "session_name", "Неизвестная сессия")
-                    # Экранируем имя сессии перед использованием в сообщении
-                    escaped_session_name = notification_bot._escape_markdown_v2(session_name)
-                    уведомление_о_подарке = f"Обнаружен подарок на \"{escaped_session_name}\""
-                    await notification_bot.send_message(уведомление_о_подарке)
+                    уведомление_о_подарке = f"Обнаружен подарок на \`{session_name}\`"
+                    await bot._send_telegram_message(settings.NOTIFICATION_CHAT_ID, уведомление_о_подарке)
 
                 bot._log('debug', 'Получение статистики подарков...', 'info')
                 stats = await bot.get_gift_statistics()
