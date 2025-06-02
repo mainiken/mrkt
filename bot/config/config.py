@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     GIVEAWAY_LIST_COUNT: int = 50
     GIVEAWAY_LIST_CURSOR: str = "" # Оставить пустым для первого запроса
 
+    # Настройки для Telegram уведомлений
+    NOTIFICATION_BOT_TOKEN: Optional[str] = None
+    NOTIFICATION_CHAT_ID: Optional[int] = None
+
     @property
     def blacklisted_sessions(self) -> List[str]:
         return [s.strip() for s in self.BLACKLISTED_SESSIONS.split(',') if s.strip()]

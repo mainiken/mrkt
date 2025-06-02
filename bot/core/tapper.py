@@ -9,6 +9,8 @@ from bot.config.config import settings
 from bot.utils import logger
 from bot.utils.first_run import check_is_first_run, append_recurring_session
 from bot.utils.updater import UpdateManager
+from bot.utils.notification_bot import NotificationBot
+from bot.exceptions.error_handler import ErrorHandler
 
 
 class BaseBot:
@@ -22,6 +24,7 @@ class BaseBot:
     GIVEAWAY_VALIDATIONS_URL: str = f"{API_BASE_URL}/giveaways/check-validations"
     GIVEAWAY_START_VALIDATION_URL: str = f"{API_BASE_URL}/giveaways/start-validation"
     GIVEAWAY_BUY_TICKETS_URL: str = f"{API_BASE_URL}/giveaways/buy-tickets"
+    GIFTS_URL: str = f"{API_BASE_URL}/gifts"
 
     DEFAULT_HEADERS: Dict[str, str] = {
         'accept': '*/*',
@@ -56,6 +59,7 @@ class BaseBot:
         self._giveaway_id: Optional[str] = None
         self._http_client: Optional[aiohttp.ClientSession] = None
         self._current_ref_id: Optional[str] = None
+        self._logger = logger
 
     def _log(self, level: str, message: str, emoji_key: Optional[str] = None) -> None:
         if level == 'debug' and not settings.DEBUG_LOGGING:
@@ -68,17 +72,17 @@ class BaseBot:
         full_message = session_prefix + formatted_message
 
         if level == 'debug':
-            logger.debug(full_message)
+            self._logger.debug(full_message)
         elif level == 'info':
-            logger.info(full_message)
+            self._logger.info(full_message)
         elif level == 'warning':
-            logger.warning(full_message)
+            self._logger.warning(full_message)
         elif level == 'error':
-            logger.error(full_message)
+            self._logger.error(full_message)
         elif level == 'success':
-            logger.success(full_message)
+            self._logger.success(full_message)
         else:
-            logger.info(full_message)
+            self._logger.info(full_message)
 
     @property
     def token(self) -> Optional[str]:
@@ -213,6 +217,48 @@ class BaseBot:
             if resp.status != 200:
                 raise Exception(f"Не удалось получить статистику подарков: {resp.status} {await resp.text()}")
             result = await resp.json()
+            await self._random_delay()
+            return result
+
+    async def get_gifts(self) -> Dict[str, Any]:
+        """Получает список подарков для текущей сессии."""
+        client = await self._get_http_client()
+        headers = self.DEFAULT_HEADERS.copy()
+        headers["authorization"] = self.token
+        # Payload из предоставленного curl запроса
+        payload = {
+            "isListed": False,
+            "count": 20,
+            "cursor": "",
+            "collectionNames": [],
+            "modelNames": [],
+            "backdropNames": [],
+            "symbolNames": [],
+            "minPrice": None,
+            "maxPrice": None,
+            "mintable": None,
+            "number": None,
+            "ordering": "Price",
+            "lowToHigh": True,
+            "query": None
+        }
+        self._log('debug', 'Попытка получения списка подарков...', 'giveaway')
+        async with client.post(self.GIFTS_URL, headers=headers, json=payload) as resp:
+            self._log('debug', f'Статус ответа получения подарков: {resp.status}', 'giveaway')
+            if resp.status != 200:
+                response_text = await resp.text()
+                self._log('error', f'Не удалось получить список подарков: {resp.status} {response_text}', 'error')
+                # В зависимости от требуемого поведения, можно возбудить исключение
+                # или вернуть пустой список/словарь с ошибкой.
+                # Для продолжения работы бота, вернем пустой список подарков.
+                return {"gifts": [], "cursor": None, "total": 0}
+
+            result: Dict[str, Any] = await resp.json()
+            gifts_count = len(result.get("gifts", []))
+            self._log('debug', f'Получено {gifts_count} подарков.', 'giveaway')
+            if gifts_count > 0:
+                self._log('info', f'Обнаружен подарок на "{getattr(self._tg_client, "session_name", "Неизвестная сессия")}"', 'giveaway') # Логируем обнаружение подарков
+
             await self._random_delay()
             return result
 
@@ -452,9 +498,6 @@ class GiveawayProcessor:
                 await self._process_giveaway(giveaway)
                 await self._bot._random_delay()
 
-            sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 300)
-            self._bot._log('info', f'Уход на паузу перед следующим циклом на {int(sleep_duration)} секунд...', 'info')
-            await asyncio.sleep(sleep_duration)
 
         except Exception as e:
             self._bot._log('info', f' Ошибка при получении/обработке розыгрышей: {e}', 'error')
@@ -472,12 +515,20 @@ async def run_tapper(tg_client: Any) -> None:
         update_task = asyncio.create_task(update_manager.run())
         bot._log('info', 'Задача автоматического обновления запущена.', 'info')
 
+    error_handler = ErrorHandler(session_manager=bot, logger=bot._logger)
+
     sleep_duration = random.uniform(1, settings.SESSION_START_DELAY)
     bot._log('info', f' Сессия запустится через ⌚ <g>{int(sleep_duration)} секунд...</g>', 'info')
     await asyncio.sleep(sleep_duration)
 
     try:
         await bot.auth()
+
+        # Отправка уведомления о запуске здесь, после успешной авторизации
+        notification_bot = NotificationBot(settings.NOTIFICATION_BOT_TOKEN, settings.NOTIFICATION_CHAT_ID)
+        сообщение_о_запуске = "Программа успешно запущена"
+        await notification_bot.send_message(сообщение_о_запуске)
+        bot._log('info', 'Уведомление о запуске отправлено.', 'info')
 
         while True:
             try:
@@ -489,6 +540,19 @@ async def run_tapper(tg_client: Any) -> None:
                 bot._log('debug', 'Проверка баланса...', 'balance')
                 await bot.check_balance()
                 await bot._random_delay()
+
+                # Добавляем проверку подарков сразу после проверки баланса
+                bot._log('debug', 'Проверка подарков...', 'giveaway')
+                gifts_data = await bot.get_gifts()
+                await bot._random_delay()
+
+                # Отправляем уведомление, если подарки найдены
+                if gifts_data.get("gifts"):
+                    session_name = getattr(tg_client, "session_name", "Неизвестная сессия")
+                    # Экранируем имя сессии перед использованием в сообщении
+                    escaped_session_name = notification_bot._escape_markdown_v2(session_name)
+                    уведомление_о_подарке = f"Обнаружен подарок на \"{escaped_session_name}\""
+                    await notification_bot.send_message(уведомление_о_подарке)
 
                 bot._log('debug', 'Получение статистики подарков...', 'info')
                 stats = await bot.get_gift_statistics()
@@ -503,12 +567,15 @@ async def run_tapper(tg_client: Any) -> None:
                 await asyncio.sleep(sleep_duration)
 
             except Exception as inner_e:
-                bot._log('error', f'Ошибка во время цикла бота: {inner_e}', 'error')
-                await asyncio.sleep(60)
+                status_code = getattr(inner_e, 'status', None)
+                error_handler.handle_error(str(inner_e), error_code=status_code)
+                # Обработчик ошибок уже включает логику сна/повтора для 401,
+                # для других ошибок может потребоваться дополнительная логика,
+                # но пока оставим как есть, т.к. handle_error логирует и завершает.
 
     except Exception as e:
-        bot._log('error', f'Исключение во внешнем блоке try в run_tapper: {e}', 'error')
         bot._log('error', f'Критическая ошибка в процессе выполнения: {e}', 'error')
+        error_handler.handle_error(str(e))
     finally:
         bot._log('info', ' Завершение функции run_tapper.', 'info')
         if update_task:
