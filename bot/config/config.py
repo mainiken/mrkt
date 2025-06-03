@@ -52,6 +52,9 @@ class Settings(BaseSettings):
 
     ENABLE_NOTIFICATION_BOT: bool = False
 
+    # Настройка для срока хранения записей об обработанных розыгрышах (в днях)
+    PROCESSED_GIVEAWAYS_DAYS_TO_KEEP: Optional[int] = 3 
+
     @property
     def blacklisted_sessions(self) -> List[str]:
         return [s.strip() for s in self.BLACKLISTED_SESSIONS.split(',') if s.strip()]

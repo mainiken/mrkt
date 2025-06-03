@@ -2,7 +2,8 @@ import aiohttp
 import asyncio
 import re
 import random
-from typing import Optional, Dict, Any, List
+import datetime
+from typing import Optional, Dict, Any, List, Set
 from urllib.parse import unquote
 
 from bot.config.config import settings
@@ -96,6 +97,12 @@ class BaseBot:
         if self._http_client is None or self._http_client.closed:
             self._http_client = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(60))
         return self._http_client
+
+    async def close(self) -> None:
+        """Закрывает HTTP клиент."""
+        if self._http_client is not None and not self._http_client.closed:
+            await self._http_client.close()
+            self._http_client = None
 
     async def get_ref_id(self) -> str:
         if self._current_ref_id is None:
@@ -262,17 +269,18 @@ class BaseBot:
             await self._random_delay()
             return result
 
-    async def get_giveaways(self, giveaway_type: str = "Available", count: int = 20, cursor: str = "") -> Dict[str, Any]:
+    async def get_giveaways_page(self, giveaway_type: str = "Available", count: int = 20, cursor: str = "") -> Dict[str, Any]:
+        """Получает одну страницу розыгрышей."""
         client = await self._get_http_client()
         headers = self.DEFAULT_HEADERS.copy()
         headers["authorization"] = self.token
         params = {"type": giveaway_type, "count": count, "cursor": cursor}
-        self._log('debug', f'Получение розыгрышей с параметрами: {params}', 'giveaway')
+        self._log('debug', f'Получение страницы розыгрышей с параметрами: {params}', 'giveaway')
         async with client.get(self.GIVEAWAYS_URL, headers=headers, params=params) as resp:
             if resp.status != 200:
-                raise Exception(f"Не удалось получить розыгрыши: {resp.status} {await resp.text()}")
+                raise Exception(f"Не удалось получить страницу розыгрышей: {resp.status} {await resp.text()}")
             result: Dict[str, Any] = await resp.json()
-            self._log('debug', f'Получено {len(result.get("items", []))} розыгрышей.', 'giveaway')
+            self._log('debug', f'Получено {len(result.get("items", []))} розыгрышей на странице.', 'giveaway')
             await self._random_delay()
             return result
 
@@ -326,7 +334,7 @@ class BaseBot:
 
     async def _send_telegram_message(self, chat_id: str, message: str) -> bool:
         """Отправляет сообщение в Telegram чат."""
-        if not settings.NOTIFICATION_BOT_TOKEN:
+        if not hasattr(settings, 'NOTIFICATION_BOT_TOKEN') or not settings.NOTIFICATION_BOT_TOKEN:
             self._log('debug', 'Токен для уведомлений Telegram не настроен.', 'warning')
             return False
 
@@ -371,21 +379,21 @@ class GiveawayProcessor:
             is_premium_required = giveaway.get("isForPremium", False)
             is_active_trader_required = giveaway.get("isForActiveTraders", False)
 
-            if settings.GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED and is_boost_required:
+            if hasattr(settings, 'GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED') and settings.GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED and is_boost_required:
                 self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway.get("previewGift", {}).get("title", "Неизвестно")}" (ID: {giveaway_id}) так как требуется буст канала и включена настройка пропуска.', 'debug')
                 continue
 
-            if settings.PARTICIPATE_IN_FREE_GIVEAWAYS and (is_premium_required or is_active_trader_required):
+            if hasattr(settings, 'PARTICIPATE_IN_FREE_GIVEAWAYS') and settings.PARTICIPATE_IN_FREE_GIVEAWAYS and (is_premium_required or is_active_trader_required):
                  self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway.get("previewGift", {}).get("title", "Неизвестно")}" (ID: {giveaway_id}) так как он не является бесплатным.', 'debug')
                  continue
 
             # Проверка на минимальное и максимальное количество участников
             participants_count = giveaway.get("participantsCount", 0)
-            if participants_count < settings.GIVEAWAY_MIN_PARTICIPANTS:
+            if hasattr(settings, 'GIVEAWAY_MIN_PARTICIPANTS') and participants_count < settings.GIVEAWAY_MIN_PARTICIPANTS:
                  self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway.get("previewGift", {}).get("title", "Неизвестно")}" (ID: {giveaway_id}) так как количество участников ({participants_count}) меньше минимального ({settings.GIVEAWAY_MIN_PARTICIPANTS}).', 'debug')
                  continue
 
-            if participants_count > settings.GIVEAWAY_MAX_PARTICIPANTS:
+            if hasattr(settings, 'GIVEAWAY_MAX_PARTICIPANTS') and participants_count > settings.GIVEAWAY_MAX_PARTICIPANTS:
                  self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway.get("previewGift", {}).get("title", "Неизвестно")}" (ID: {giveaway_id}) так как количество участников ({participants_count}) больше максимального ({settings.GIVEAWAY_MAX_PARTICIPANTS}).', 'debug')
                  continue
 
@@ -406,7 +414,7 @@ class GiveawayProcessor:
             self._bot._log('info', f' Подписка на канал <y>{channel_name}</y> подтверждена.', 'success')
             return True
 
-        if settings.GIVEAWAY_SKIP_CHANNEL_SUBSCRIBE_REQUIRED:
+        if hasattr(settings, 'GIVEAWAY_SKIP_CHANNEL_SUBSCRIBE_REQUIRED') and settings.GIVEAWAY_SKIP_CHANNEL_SUBSCRIBE_REQUIRED:
             self._bot._log('debug', f'Пропускаем проверку подписки на канал <y>{channel_name}</y> по настройке.', 'info')
             return False
 
@@ -421,7 +429,8 @@ class GiveawayProcessor:
                 return False
 
             self._bot._log('info', f' Вступление в канал <y>{channel_name}</y> успешно.', 'success')
-            self._bot._log('debug', f'Ожидание после вступления в канал согласно настройкам: {settings.CHANNEL_SUBSCRIBE_DELAY} сек.', 'info')
+            if hasattr(settings, 'CHANNEL_SUBSCRIBE_DELAY'):
+                 self._bot._log('debug', f'Ожидание после вступления в канал согласно настройкам: {settings.CHANNEL_SUBSCRIBE_DELAY} сек.', 'info')
 
             start_validation_result = await self._bot.start_giveaway_validation(
                 giveaway_id, channel_name, "ChannelMember"
@@ -447,7 +456,7 @@ class GiveawayProcessor:
                     self._bot._log('info', f' Подписка на канал <y>{channel_name}</y> подтверждена.', 'success')
                     return True
 
-                self._bot._log('debug', f'Попытка {attempt+1}/{max_retries}: подписка на канале <y>{channel_name}</y> не подтверждена (статус: {updated_is_member_status}), ждем {delay:.2f} сек.', 'debug')
+                self._bot._log('debug', f'Попытка {attempt+1}/{max_retries}: подписка на канале <y>{channel_name}</y> не подтверждена ( статус: {updated_is_member_status}), ждем {delay:.2f} сек.', 'debug')
 
             self._bot._log('info', f' Не удалось подтвердить подписку на канале <y>{channel_name}</y> после {max_retries} попыток.', 'error')
             return False
@@ -467,11 +476,11 @@ class GiveawayProcessor:
             validations = await self._bot.check_giveaway_validations(giveaway_id)
             can_join = True
 
-            if settings.GIVEAWAY_REQUIRE_PREMIUM and not validations.get("isPremium", False):
+            if hasattr(settings, 'GIVEAWAY_REQUIRE_PREMIUM') and settings.GIVEAWAY_REQUIRE_PREMIUM and not validations.get("isPremium", False):
                 self._bot._log('info', f'Розыгрыш <y>{giveaway_title}</y> требует премиум, пользователь не премиум.', 'warning')
                 can_join = False
 
-            if can_join and settings.GIVEAWAY_REQUIRE_ACTIVE_TRADER and not validations.get("isActiveTrader", False):
+            if can_join and hasattr(settings, 'GIVEAWAY_REQUIRE_ACTIVE_TRADER') and settings.GIVEAWAY_REQUIRE_ACTIVE_TRADER and not validations.get("isActiveTrader", False):
                 self._bot._log('info', f'Розыгрыш <y>{giveaway_title}</y> требует активного трейдера, пользователь не активный трейдер.', 'warning')
                 can_join = False
 
@@ -485,8 +494,8 @@ class GiveawayProcessor:
                     is_member = channel_validation.get("isMember")
                     is_boosted = channel_validation.get("isBoosted")
 
-                    if settings.GIVEAWAY_REQUIRE_CHANNEL_BOOST and is_boosted != "Validated":
-                        if not settings.GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED:
+                    if hasattr(settings, 'GIVEAWAY_REQUIRE_CHANNEL_BOOST') and settings.GIVEAWAY_REQUIRE_CHANNEL_BOOST and is_boosted != "Validated":
+                        if not (hasattr(settings, 'GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED') and settings.GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED):
                             self._bot._log('info', f'Розыгрыш <y>{giveaway_title}</y> требует буст канала <y>{channel_name}</y>, но буст не подтвержден.', 'warning')
                             can_join = False
                             break
@@ -503,41 +512,125 @@ class GiveawayProcessor:
                     join_result = await self._bot.join_giveaway(giveaway_id, giveaway_title)
                     if not join_result.get("success"):
                         self._bot._log('info', f'Не удалось принять участие в розыгрыше <y>{giveaway_title}</y>: {join_result.get("message", "Ошибка")}', 'warning')
+
+                    # После попытки присоединения, помечаем розыгрыш как обработанный
+                    await self._channel_repository.add_processed_giveaway(giveaway_id)
+                    self._bot._log('debug', f'Розыгрыш <y>{giveaway_title}</y> (ID: {giveaway_id}) помечен как обработанный.', 'info')
+
                 else:
                     self._bot._log('info', f' Условия для розыгрыша <y>{giveaway_title}</y> не выполнены. Пропускаем.', 'info')
+                    # Можно помечать как обработанный, даже если не участвовали,
+                    # чтобы не проверять его условия снова.
+                    await self._channel_repository.add_processed_giveaway(giveaway_id)
+                    self._bot._log('debug', f'Розыгрыш <y>{giveaway_title}</y> (ID: {giveaway_id}) помечен как обработанный (условия не выполнены).', 'info')
+
 
         except Exception as e:
-            self._bot._log('info', f'Ошибка при обработке розыгрыша <y>{giveaway_title}</y>: {e}', 'error')
+            self._bot._log('error', f'Ошибка при обработке розыгрыша <y>{giveaway_title}</y>: {e}', 'error')
+            # В случае ошибки при обработке, возможно, стоит тоже пометить как обработанный,
+            # чтобы не застрять на одном и том же розыгрыше.
+            # Решение зависит от желаемого поведения при ошибках.
+            # Пока оставим без пометки, чтобы была попытка повторить в следующем цикле
+            # или если ошибка временная.
+
+    async def _collect_giveaways_until_repeat(self) -> List[Dict[str, Any]]:
+        """Собирает уникальные розыгрыши постранично до появления повтора."""
+        self._bot._log('debug', 'Начинаем сбор уникальных розыгрышей до появления повторов...', 'giveaway')
+        collected_giveaways: List[Dict[str, Any]] = []
+        collected_giveaway_ids_this_run: Set[str] = set() # Сет для отслеживания ID в ТЕКУЩЕМ цикле сбора
+        current_cursor = ""
+        page_count = 0
+
+        while True:
+            page_count += 1
+            self._bot._log('debug', f'Запрос страницы {page_count} с cursor="{current_cursor}"...', 'giveaway')
+            try:
+                giveaways_data = await self._bot.get_giveaways_page(
+                    giveaway_type=getattr(settings, 'GIVEAWAY_LIST_TYPE', "Available"),
+                    count=getattr(settings, 'GIVEAWAY_LIST_COUNT', 20),
+                    cursor=current_cursor
+                )
+                items = giveaways_data.get("items", [])
+                self._bot._log('debug', f'На странице {page_count} получено {len(items)} розыгрышей.', 'giveaway')
+
+                if not items:
+                    self._bot._log('debug', 'Получен пустой список элементов на странице — сбор завершен.', 'giveaway')
+                    break
+
+                new_giveaways_on_page = []
+                repeat_found = False
+                for item in items:
+                    giveaway_id = item.get("id")
+                    if not giveaway_id:
+                        continue
+
+                    # *** Ключевая проверка 1: был ли этот розыгрыш обработан в ПРОШЛЫХ запусках? ***
+                    if await self._channel_repository.is_giveaway_processed(giveaway_id):
+                        self._bot._log('debug', f'Розыгрыш ID:{giveaway_id} уже был обработан ранее. Пропускаем сбор.', 'debug')
+                        continue # Пропускаем этот розыгрыш, смотрим следующий в этом списке
+
+                    # *** Ключевая проверка 2: был ли этот розыгрыш СОБРАН в ТЕКУЩЕМ цикле сбора? ***
+                    if giveaway_id in collected_giveaway_ids_this_run:
+                        self._bot._log('info', f'Обнаружен повторный розыгрыш ID: {giveaway_id} в текущем цикле сбора. Сбор уникальных розыгрышей завершен.', 'giveaway')
+                        repeat_found = True
+                        break # Прекращаем сбор при первом повторе в этом цикле
+
+                    # Если розыгрыш новый для этого запуска и не был обработан ранее
+                    collected_giveaway_ids_this_run.add(giveaway_id)
+                    new_giveaways_on_page.append(item)
+
+                collected_giveaways.extend(new_giveaways_on_page)
+
+                if repeat_found:
+                    break # Выходим из внешнего цикла while True, если обнаружен повтор
+
+                # Получаем курсор для следующей страницы
+                next_cursor = giveaways_data.get("nextCursor") # Используем "nextCursor" как в вашем примере
+
+                # Изменено: Прерываем цикл, если next_cursor отсутствует (None или пустая строка).
+                if not next_cursor:
+                     self._bot._log('debug', 'Получен пустой или отсутствующий nextCursor. Сбор завершен.', 'giveaway')
+                     break
+
+                # Если курсор есть, используем его для следующего запроса
+                current_cursor = next_cursor
+                self._bot._log('debug', f'Следующий cursor: "{current_cursor}".', 'giveaway')
+
+                await self._bot._random_delay()
+
+            except Exception as e:
+                self._bot._log('error', f'Ошибка при сборе розыгрышей на странице {page_count}: {e}', 'error')
+                # В случае ошибки сбора, обрабатываем то, что удалось собрать
+                break # При ошибке прерываем сбор
+
+        self._bot._log('info', f'Сбор уникальных розыгрышей завершен. Всего собрано {len(collected_giveaways)} для обработки.', 'giveaway')
+        return collected_giveaways
+
 
     async def _process_available_giveaways(self) -> None:
         self._bot._log('debug', 'Начинаем обработку доступных розыгрышей...', 'giveaway')
         try:
-            giveaways_data = await self._bot.get_giveaways(
-                giveaway_type=settings.GIVEAWAY_LIST_TYPE,
-                count=settings.GIVEAWAY_LIST_COUNT,
-                cursor=settings.GIVEAWAY_LIST_CURSOR
-            )
-            giveaways_items = giveaways_data.get("items", [])
-            if not giveaways_items:
-                self._bot._log('debug', 'Розыгрышей не найдено.', 'giveaway')
-                return
+            # Собираем уникальные розыгрыши до появления повторов или пустого списка
+            giveaway_list = await self._collect_giveaways_until_repeat()
 
-            giveaway_list = await self._filter_giveaways(giveaways_items)
             if not giveaway_list:
-                self._bot._log('debug', 'Нет розыгрышей, подходящих по фильтрам.', 'giveaway')
+                self._bot._log('debug', 'Нет новых розыгрышей для обработки.', 'giveaway')
                 return
 
-            self._bot._log('info', f'Найдено {len(giveaway_list)} розыгрышей для обработки.', 'giveaway')
+            self._bot._log('info', f'Найдено {len(giveaway_list)} новых розыгрышей для обработки.', 'giveaway')
 
             for giveaway in giveaway_list:
-                await self._process_giveaway(giveaway)
+                await self._process_giveaway(giveaway) # _process_giveaway теперь сам проверяет и помечает в БД
                 await self._bot._random_delay()
 
 
         except Exception as e:
-            self._bot._log('info', f' Ошибка при получении/обработке розыгрышей: {e}', 'error')
+            self._bot._log('error', f' Ошибка при получении/обработке розыгрышей: {e}', 'error')
 
     async def process_giveaways(self) -> None:
+        # Очистка старых записей об обработанных розыгрышах (опционально и настраиваемо)
+        # Это можно сделать здесь или в run_tapper, решать вам.
+        # await self._channel_repository.clear_old_processed_giveaways(days_to_keep=settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP)
         await self._process_available_giveaways()
 
 
@@ -546,6 +639,15 @@ async def run_tapper(tg_client: Any) -> None:
 
     channel_repository = ChannelRepository()
     await channel_repository.initialize()
+    # Очистка старых записей об обработанных розыгрышах при старте бота
+    # Убедитесь, что в settings есть настройка PROCESSED_GIVEAWAYS_DAYS_TO_KEEP
+    if hasattr(settings, 'PROCESSED_GIVEAWAYS_DAYS_TO_KEEP') and settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP is not None:
+         bot._log('info', f'Очистка старых записей об обработанных розыгрышах (старше {settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP} дней)...', 'info')
+         await channel_repository.clear_old_processed_giveaways(days_to_keep=settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP)
+         bot._log('info', 'Очистка завершена.', 'info')
+    else:
+         bot._log('warning', 'Настройка PROCESSED_GIVEAWAYS_DAYS_TO_KEEP не найдена. Пропуск очистки старых записей.', 'warning')
+
 
     update_task = None
     if settings.AUTO_UPDATE:
@@ -583,7 +685,12 @@ async def run_tapper(tg_client: Any) -> None:
                     if gifts_data.get("gifts"):
                         session_name = getattr(tg_client, "session_name", "Неизвестная сессия")
                         уведомление_о_подарке = f"Обнаружен подарок на \`{session_name}\`"
-                        await bot._send_telegram_message(settings.NOTIFICATION_CHAT_ID, уведомление_о_подарке)
+                        # Проверяем, настроен ли чат ID для уведомлений
+                        if settings.get('NOTIFICATION_CHAT_ID'):
+                             await bot._send_telegram_message(settings.NOTIFICATION_CHAT_ID, уведомление_о_подарке)
+                        else:
+                             bot._log('warning', 'NOTIFICATION_CHAT_ID не настроен. Уведомление о подарке не отправлено.', 'warning')
+
 
                     bot._log('debug', 'Получение статистики подарков...', 'info')
                     stats = await bot.get_gift_statistics()
@@ -591,9 +698,13 @@ async def run_tapper(tg_client: Any) -> None:
                     await bot._random_delay()
 
                     giveaway_processor = GiveawayProcessor(bot, channel_repository)
-                    await giveaway_processor.process_giveaways()
+                    await giveaway_processor.process_giveaways() # Этот метод теперь управляет сбором и обработкой
 
-                    sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 300)
+                    # Задержка перед следующим циклом теперь после обработки всех собранных розыгрышей
+                    # Можно настроить отдельную задержку для цикла обработки розыгрышей,
+                    # чтобы не ждать CHANNEL_SUBSCRIBE_DELAY после каждого цикла парсинга.
+                    # Пока оставим так, но имейте в виду.
+                    sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 300) # Используем существующую настройку, или можно добавить новую
                     bot._log('info', f'Уход на паузу перед следующим циклом на {int(sleep_duration)} секунд...', 'info')
                     await asyncio.sleep(sleep_duration)
 
@@ -619,4 +730,6 @@ async def run_tapper(tg_client: Any) -> None:
                 await update_task
             except asyncio.CancelledError:
                 bot._log('info', 'Задача автоматического обновления отменена.', 'info')
+        # Закрываем соединение с базой данных и HTTP клиент
+        await channel_repository.close()
         await bot.close()
