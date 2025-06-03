@@ -2,6 +2,11 @@ import time
 import logging
 
 
+class UnauthorizedError(Exception):
+    """Специальное исключение для ошибки 401."""
+    pass
+
+
 class ErrorHandler:
     """Обработчик ошибок для бота."""
 
@@ -35,29 +40,10 @@ class ErrorHandler:
         """
         Обрабатывает ошибку 401 (неавторизован).
 
-        Пытается пересоздать токен и переподключить сессию.
-        Если не удается, уходит в сон и повторяет попытку.
+        Выбрасывает исключение UnauthorizedError для сигнализации о необходимости перезапуска сессии.
         """
-        self._logger.warning("Обнаружена ошибка 401. Попытка пересоздания токена и переподключения сессии.")
-        try:
-            self._session_manager.recreate_token()
-            self._session_manager.reconnect_session()
-            self._logger.info("Токен пересоздан и сессия переподключена успешно.")
-        except Exception as e:
-            self._logger.error(f"Не удалось пересоздать токен/переподключить сессию: {e}. Уходим в сон.")
-            sleep_duration = 360  # Начальная продолжительность сна
-            while True:
-                self._logger.info(f"Сон на {sleep_duration} секунд перед повторной попыткой.")
-                time.sleep(sleep_duration)
-                try:
-                    self._session_manager.recreate_token()
-                    self._session_manager.reconnect_session()
-                    self._logger.info("Повторная попытка: Токен пересоздан и сессия переподключена успешно.")
-                    break  # Выход из цикла после успешного переподключения
-                except Exception as retry_e:
-                    self._logger.error(f"Повторная попытка не удалась: {retry_e}.")
-                    # Увеличиваем время сна, но не более 3600 секунд
-                    sleep_duration = min(sleep_duration * 2, 3600)
+        self._logger.warning("Обнаружена ошибка 401. Требуется перезапуск сессии.")
+        raise UnauthorizedError("Ошибка 401: Неавторизован. Требуется перезапуск сессии.")
 
     def _handle_generic_error(self, error_message: str):
         """

@@ -9,7 +9,8 @@ from bot.config.config import settings
 from bot.utils import logger
 from bot.utils.first_run import check_is_first_run, append_recurring_session
 from bot.utils.updater import UpdateManager
-from bot.exceptions.error_handler import ErrorHandler
+from bot.exceptions.error_handler import ErrorHandler, UnauthorizedError
+from bot.utils.channel_repository import ChannelRepository
 
 
 class BaseBot:
@@ -353,8 +354,9 @@ class BaseBot:
 
 
 class GiveawayProcessor:
-    def __init__(self, bot: BaseBot):
+    def __init__(self, bot: BaseBot, channel_repository: ChannelRepository):
         self._bot = bot
+        self._channel_repository = channel_repository
 
     async def _filter_giveaways(self, giveaways: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         filtered = []
@@ -395,8 +397,13 @@ class GiveawayProcessor:
     async def _check_and_fulfill_channel_validation(
         self, giveaway_id: str, channel_name: str, current_is_member_status: str
     ) -> bool:
+        session_name = getattr(self._bot._tg_client, "session_name", "unknown_session")
+        if await self._channel_repository.is_subscribed(session_name, channel_name):
+            self._bot._log('info', f'Канал <y>{channel_name}</y> уже в базе, пропускаем подписку.', 'success')
+            return True
         if current_is_member_status == "Validated":
-            self._bot._log('info', f' Участие на канале <y>{channel_name}</y> уже выполнено.', 'success')
+            await self._channel_repository.add_channel(session_name, channel_name)
+            self._bot._log('info', f' Подписка на канал <y>{channel_name}</y> подтверждена.', 'success')
             return True
 
         if settings.GIVEAWAY_SKIP_CHANNEL_SUBSCRIBE_REQUIRED:
@@ -436,6 +443,7 @@ class GiveawayProcessor:
                 )
 
                 if updated_is_member_status == "Validated":
+                    await self._channel_repository.add_channel(session_name, channel_name)
                     self._bot._log('info', f' Подписка на канал <y>{channel_name}</y> подтверждена.', 'success')
                     return True
 
@@ -536,6 +544,9 @@ class GiveawayProcessor:
 async def run_tapper(tg_client: Any) -> None:
     bot = BaseBot(tg_client)
 
+    channel_repository = ChannelRepository()
+    await channel_repository.initialize()
+
     update_task = None
     if settings.AUTO_UPDATE:
         update_manager = UpdateManager()
@@ -551,46 +562,51 @@ async def run_tapper(tg_client: Any) -> None:
     try:
         await bot.auth()
 
-        while True:
-            try:
-                bot._log('debug', 'Получение информации профиля...', 'info')
-                me = await bot.get_me()
-                bot._log('debug', f'Профиль: {me}', 'debug')
-                await bot._random_delay()
+        try:
+            while True:
+                try:
+                    bot._log('debug', 'Получение информации профиля...', 'info')
+                    me = await bot.get_me()
+                    bot._log('debug', f'Профиль: {me}', 'debug')
+                    await bot._random_delay()
 
-                bot._log('debug', 'Проверка баланса...', 'balance')
-                await bot.check_balance()
-                await bot._random_delay()
+                    bot._log('debug', 'Проверка баланса...', 'balance')
+                    await bot.check_balance()
+                    await bot._random_delay()
 
-                # Добавляем проверку подарков сразу после проверки баланса
-                bot._log('debug', 'Проверка подарков...', 'giveaway')
-                gifts_data = await bot.get_gifts()
-                await bot._random_delay()
+                    # Добавляем проверку подарков сразу после проверки баланса
+                    bot._log('debug', 'Проверка подарков...', 'giveaway')
+                    gifts_data = await bot.get_gifts()
+                    await bot._random_delay()
 
-                # Отправляем уведомление, если подарки найдены
-                if gifts_data.get("gifts"):
-                    session_name = getattr(tg_client, "session_name", "Неизвестная сессия")
-                    уведомление_о_подарке = f"Обнаружен подарок на \`{session_name}\`"
-                    await bot._send_telegram_message(settings.NOTIFICATION_CHAT_ID, уведомление_о_подарке)
+                    # Отправляем уведомление, если подарки найдены
+                    if gifts_data.get("gifts"):
+                        session_name = getattr(tg_client, "session_name", "Неизвестная сессия")
+                        уведомление_о_подарке = f"Обнаружен подарок на \`{session_name}\`"
+                        await bot._send_telegram_message(settings.NOTIFICATION_CHAT_ID, уведомление_о_подарке)
 
-                bot._log('debug', 'Получение статистики подарков...', 'info')
-                stats = await bot.get_gift_statistics()
-                bot._log('debug', f'Статистика: {stats}', 'debug')
-                await bot._random_delay()
+                    bot._log('debug', 'Получение статистики подарков...', 'info')
+                    stats = await bot.get_gift_statistics()
+                    bot._log('debug', f'Статистика: {stats}', 'debug')
+                    await bot._random_delay()
 
-                giveaway_processor = GiveawayProcessor(bot)
-                await giveaway_processor.process_giveaways()
+                    giveaway_processor = GiveawayProcessor(bot, channel_repository)
+                    await giveaway_processor.process_giveaways()
 
-                sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 300)
-                bot._log('info', f'Уход на паузу перед следующим циклом на {int(sleep_duration)} секунд...', 'info')
-                await asyncio.sleep(sleep_duration)
+                    sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 300)
+                    bot._log('info', f'Уход на паузу перед следующим циклом на {int(sleep_duration)} секунд...', 'info')
+                    await asyncio.sleep(sleep_duration)
 
-            except Exception as inner_e:
-                status_code = getattr(inner_e, 'status', None)
-                error_handler.handle_error(str(inner_e), error_code=status_code)
-                # Обработчик ошибок уже включает логику сна/повтора для 401,
-                # для других ошибок может потребоваться дополнительная логика,
-                # но пока оставим как есть, т.к. handle_error логирует и завершает.
+                except Exception as inner_e:
+                    status_code = getattr(inner_e, 'status', None)
+                    error_handler.handle_error(str(inner_e), error_code=status_code)
+                    # Обработчик ошибок уже включает логику сна/повтора для 401,
+                    # для других ошибок может потребоваться дополнительная логика,
+                    # но пока оставим как есть, т.к. handle_error логирует и завершает.
+
+        except UnauthorizedError as auth_error:
+            bot._log('warning', f'Обнаружена ошибка авторизации, остановка сессии: {auth_error}', 'warning')
+            # Внешняя логика должна будет перезапустить эту сессию
 
     except Exception as e:
         bot._log('error', f'Критическая ошибка в процессе выполнения: {e}', 'error')
