@@ -98,6 +98,34 @@ python main.py
 | `DEVICE_PARAMS`          | `False`                    | Кастомные параметры устройства           |
 | `AUTO_UPDATE`            | `True`                     | Автообновления                           |
 | `CHECK_UPDATE_INTERVAL`  | `300`                      | Интервал обновлений (в секундах)         |
+| `NOTIFICATION_BOT_TOKEN` |                            | Токен Telegram-бота для уведомлений      |
+| `NOTIFICATION_CHAT_ID`   |                            | Chat ID для получения уведомлений         |
+
+### Настройка Telegram-уведомлений
+
+1. **Создайте Telegram-бота**
+   - Откройте Telegram и найдите @BotFather
+   - Отправьте команду `/newbot` и следуйте инструкциям
+   - Скопируйте выданный токен (например, `123456789:ABCDEF...`)
+
+2. **Узнайте свой chat_id**
+   - Напишите любое сообщение вашему новому боту
+   - Перейдите по ссылке: [https://api.telegram.org/bot<ВАШ_ТОКЕН>/getUpdates](https://api.telegram.org/bot<ВАШ_ТОКЕН>/getUpdates)
+   - Найдите в ответе поле `chat":{"id":<ВАШ_CHAT_ID>,...}`
+
+3. **Заполните .env**
+   - Откройте файл `.env`
+   - Укажите значения:
+     ```env
+     NOTIFICATION_BOT_TOKEN=ваш_токен_бота
+     NOTIFICATION_CHAT_ID=ваш_chat_id
+     ```
+
+**Пример:**
+```env
+NOTIFICATION_BOT_TOKEN=123456789:ABCDEF1234567890abcdef
+NOTIFICATION_CHAT_ID=987654321
+```
 
 ---
 
