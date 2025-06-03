@@ -255,9 +255,6 @@ class BaseBot:
             if resp.status != 200:
                 response_text = await resp.text()
                 self._log('error', f'Не удалось получить список подарков: {resp.status} {response_text}', 'error')
-                # В зависимости от требуемого поведения, можно возбудить исключение
-                # или вернуть пустой список/словарь с ошибкой.
-                # Для продолжения работы бота, вернем пустой список подарков.
                 return {"gifts": [], "cursor": None, "total": 0}
 
             result: Dict[str, Any] = await resp.json()
@@ -365,6 +362,14 @@ class GiveawayProcessor:
     def __init__(self, bot: BaseBot, channel_repository: ChannelRepository):
         self._bot = bot
         self._channel_repository = channel_repository
+        # Добавим настройку времени неактивности каналов для отписки (в часах)
+        # По умолчанию 12 часов, как предложено пользователем
+        self._inactivity_threshold_hours = getattr(settings, 'GIVEAWAY_CHANNEL_INACTIVITY_HOURS', 12)
+        # Добавим настройку интервала проверки неактивных каналов (в секундах)
+        # По умолчанию раз в час
+        self._check_interval_seconds = getattr(settings, 'GIVEAWAY_CHANNEL_LEAVE_CHECK_INTERVAL', 3600)
+        self._last_leave_check_time: datetime.datetime = datetime.datetime.now() - datetime.timedelta(
+            seconds=self._check_interval_seconds) # Инициализируем так, чтобы первая проверка была сразу
 
     async def _filter_giveaways(self, giveaways: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         filtered = []
@@ -408,10 +413,14 @@ class GiveawayProcessor:
         session_name = getattr(self._bot._tg_client, "session_name", "unknown_session")
         if await self._channel_repository.is_subscribed(session_name, channel_name):
             self._bot._log('info', f'Канал <y>{channel_name}</y> уже в базе, пропускаем подписку.', 'success')
+            # Если канал уже в базе, обновляем время его активности, т.к. он связан с актуальным розыгрышем
+            await self._channel_repository.update_channel_activity(session_name, channel_name)
             return True
         if current_is_member_status == "Validated":
             await self._channel_repository.add_channel(session_name, channel_name)
             self._bot._log('info', f' Подписка на канал <y>{channel_name}</y> подтверждена.', 'success')
+            # Если подписка подтверждена сервером, добавляем канал с текущей активностью
+            await self._channel_repository.update_channel_activity(session_name, channel_name)
             return True
 
         if hasattr(settings, 'GIVEAWAY_SKIP_CHANNEL_SUBSCRIBE_REQUIRED') and settings.GIVEAWAY_SKIP_CHANNEL_SUBSCRIBE_REQUIRED:
@@ -421,6 +430,7 @@ class GiveawayProcessor:
         self._bot._log('debug', f'Попытка подписаться на канал <y>{channel_name}</y>', 'debug')
 
         try:
+            # join_telegram_channel теперь сам управляет подключением/отключением и FloodWait
             channel_join_success = await self._bot._tg_client.join_telegram_channel(
                 {"additional_data": {"username": channel_name}}
             )
@@ -429,8 +439,13 @@ class GiveawayProcessor:
                 return False
 
             self._bot._log('info', f' Вступление в канал <y>{channel_name}</y> успешно.', 'success')
+            # После успешного вступления, добавляем/обновляем канал с текущей активностью
+            await self._channel_repository.add_channel(session_name, channel_name)
+
             if hasattr(settings, 'CHANNEL_SUBSCRIBE_DELAY'):
-                 self._bot._log('debug', f'Ожидание после вступления в канал согласно настройкам: {settings.CHANNEL_SUBSCRIBE_DELAY} сек.', 'info')
+                 # Задержка после подписки перенесена в run_tapper после обработки розыгрыша
+                 pass
+
 
             start_validation_result = await self._bot.start_giveaway_validation(
                 giveaway_id, channel_name, "ChannelMember"
@@ -452,7 +467,8 @@ class GiveawayProcessor:
                 )
 
                 if updated_is_member_status == "Validated":
-                    await self._channel_repository.add_channel(session_name, channel_name)
+                    # Если валидация подтверждена после подписки, обновляем время активности
+                    await self._channel_repository.update_channel_activity(session_name, channel_name)
                     self._bot._log('info', f' Подписка на канал <y>{channel_name}</y> подтверждена.', 'success')
                     return True
 
@@ -512,6 +528,15 @@ class GiveawayProcessor:
                     join_result = await self._bot.join_giveaway(giveaway_id, giveaway_title)
                     if not join_result.get("success"):
                         self._bot._log('info', f'Не удалось принять участие в розыгрыше <y>{giveaway_title}</y>: {join_result.get("message", "Ошибка")}', 'warning')
+                    else:
+                        # Если успешно присоединились, обновляем время активности для ВСЕХ каналов этого розыгрыша
+                        session_name = getattr(self._bot._tg_client, "session_name", "unknown_session")
+                        for channel_validation in channel_validations:
+                             channel_name = channel_validation.get("channel")
+                             if channel_name:
+                                  await self._channel_repository.update_channel_activity(session_name, channel_name)
+                                  self._bot._log('debug', f'Время активности для канала <y>{channel_name}</y> обновлено после присоединения к розыгрышу <y>{giveaway_title}</y>.', 'debug')
+
 
                     # После попытки присоединения, помечаем розыгрыш как обработанный
                     await self._channel_repository.add_processed_giveaway(giveaway_id)
@@ -534,20 +559,28 @@ class GiveawayProcessor:
             # или если ошибка временная.
 
     async def _collect_giveaways_until_repeat(self) -> List[Dict[str, Any]]:
-        """Собирает уникальные розыгрыши постранично до появления повтора."""
-        self._bot._log('debug', 'Начинаем сбор уникальных розыгрышей до появления повторов...', 'giveaway')
+        """Собирает уникальные розыгрыши постранично до появления повтора или достижения лимита."""
+        self._bot._log('debug', 'Начинаем сбор уникальных розыгрышей до появления повторов или достижения лимита...', 'giveaway')
         collected_giveaways: List[Dict[str, Any]] = []
         collected_giveaway_ids_this_run: Set[str] = set() # Сет для отслеживания ID в ТЕКУЩЕМ цикле сбора
         current_cursor = ""
         page_count = 0
 
+        # Получаем максимальное количество розыгрышей из настроек
+        max_giveaways = getattr(settings, 'GIVEAWAY_MAX_PER_RUN', 100)
+
         while True:
+            # Проверяем, достигли ли мы максимального лимита перед запросом следующей страницы
+            if len(collected_giveaways) >= max_giveaways:
+                self._bot._log('info', f'Достигнут лимит ({max_giveaways}) на количество собираемых розыгрышей за проход. Сбор завершен.', 'giveaway')
+                break
+
             page_count += 1
-            self._bot._log('debug', f'Запрос страницы {page_count} с cursor="{current_cursor}"...', 'giveaway')
+            self._bot._log('debug', f'Запрос страницы {page_count} с cursor="{current_cursor}" (Собрано: {len(collected_giveaways)})...', 'giveaway')
             try:
                 giveaways_data = await self._bot.get_giveaways_page(
                     giveaway_type=getattr(settings, 'GIVEAWAY_LIST_TYPE', "Available"),
-                    count=getattr(settings, 'GIVEAWAY_LIST_COUNT', 20),
+                    count=getattr(settings, 'GIVEAWAY_LIST_COUNT', 20), # Размер страницы
                     cursor=current_cursor
                 )
                 items = giveaways_data.get("items", [])
@@ -560,6 +593,12 @@ class GiveawayProcessor:
                 new_giveaways_on_page = []
                 repeat_found = False
                 for item in items:
+                    # Проверяем, не превысит ли добавление этого розыгрыша лимит
+                    if len(collected_giveaways) + len(new_giveaways_on_page) >= max_giveaways:
+                         self._bot._log('debug', f'Добавление следующего розыгрыша превысит лимит {max_giveaways}. Завершаем сбор на текущей странице.', 'debug')
+                         break # Прерываем перебор элементов на текущей странице
+
+
                     giveaway_id = item.get("id")
                     if not giveaway_id:
                         continue
@@ -603,7 +642,7 @@ class GiveawayProcessor:
                 # В случае ошибки сбора, обрабатываем то, что удалось собрать
                 break # При ошибке прерываем сбор
 
-        self._bot._log('info', f'Сбор уникальных розыгрышей завершен. Всего собрано {len(collected_giveaways)} для обработки.', 'giveaway')
+        self._bot._log('info', f'Сбор уникальных розыгрышей завершен. Всего собрано {len(collected_giveaways)} для обработки (лимит: {max_giveaways}).', 'giveaway')
         return collected_giveaways
 
 
@@ -629,9 +668,54 @@ class GiveawayProcessor:
 
     async def process_giveaways(self) -> None:
         # Очистка старых записей об обработанных розыгрышах (опционально и настраиваемо)
-        # Это можно сделать здесь или в run_tapper, решать вам.
         # await self._channel_repository.clear_old_processed_giveaways(days_to_keep=settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP)
         await self._process_available_giveaways()
+
+    async def leave_inactive_channels(self) -> None:
+        """Периодически проверяет и отписывается от неактивных каналов."""
+        current_time = datetime.datetime.now()
+        # Проверяем, прошло ли достаточно времени с последней проверки
+        if current_time - self._last_leave_check_time < datetime.timedelta(seconds=self._check_interval_seconds):
+            self._bot._log('debug', 'Время для проверки неактивных каналов еще не пришло.', 'debug')
+            return
+
+        self._bot._log('info', 'Начинаем проверку неактивных каналов для отписки...', 'info')
+        session_name = getattr(self._bot._tg_client, "session_name", "unknown_session")
+
+        try:
+            channels_to_leave = await self._channel_repository.get_channels_to_leave(
+                session_name, self._inactivity_threshold_hours
+            )
+
+            if not channels_to_leave:
+                self._bot._log('info', 'Нет неактивных каналов для отписки.', 'info')
+                self._last_leave_check_time = datetime.datetime.now() # Обновляем время проверки
+                return
+
+            self._bot._log('info', f'Найдено {len(channels_to_leave)} неактивных каналов для отписки.', 'warning')
+
+            for channel_id, channel_name in channels_to_leave:
+                self._bot._log('debug', f'Попытка отписаться от канала <y>{channel_name}</y> (ID: {channel_id})...', 'warning')
+                leave_success = await self._bot._tg_client.leave_telegram_channel(channel_name)
+
+                if leave_success:
+                    # Удаляем канал из базы после успешной отписки
+                    await self._channel_repository.remove_channel(channel_id)
+                    self._bot._log('success', f'Успешно отписались от канала <y>{channel_name}</y>.', 'success')
+                else:
+                    # Если отписка не удалась (например, FloodWait), не удаляем из базы,
+                    # чтобы попробовать позже. Логирование ошибки уже есть в leave_telegram_channel.
+                    pass # Логика обработки ошибок отписки уже внутри leave_telegram_channel
+
+                # Добавляем небольшую задержку между отписками
+                await asyncio.sleep(random.uniform(5, 15)) # Задержка между отписками
+
+        except Exception as e:
+            self._bot._log('error', f'Ошибка при проверке/отписке от неактивных каналов: {e}', 'error')
+
+        finally:
+            # Обновляем время последней проверки независимо от успеха, чтобы не спамить проверками
+            self._last_leave_check_time = datetime.datetime.now()
 
 
 async def run_tapper(tg_client: Any) -> None:
@@ -640,7 +724,6 @@ async def run_tapper(tg_client: Any) -> None:
     channel_repository = ChannelRepository()
     await channel_repository.initialize()
     # Очистка старых записей об обработанных розыгрышах при старте бота
-    # Убедитесь, что в settings есть настройка PROCESSED_GIVEAWAYS_DAYS_TO_KEEP
     if hasattr(settings, 'PROCESSED_GIVEAWAYS_DAYS_TO_KEEP') and settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP is not None:
          bot._log('info', f'Очистка старых записей об обработанных розыгрышах (старше {settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP} дней)...', 'info')
          await channel_repository.clear_old_processed_giveaways(days_to_keep=settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP)
@@ -665,8 +748,13 @@ async def run_tapper(tg_client: Any) -> None:
         await bot.auth()
 
         try:
+            giveaway_processor = GiveawayProcessor(bot, channel_repository) # Создаем экземпляр процессора розыгрышей
+
             while True:
                 try:
+                    # Периодически проверяем и отписываемся от неактивных каналов
+                    await giveaway_processor.leave_inactive_channels()
+
                     bot._log('debug', 'Получение информации профиля...', 'info')
                     me = await bot.get_me()
                     bot._log('debug', f'Профиль: {me}', 'debug')
@@ -676,7 +764,7 @@ async def run_tapper(tg_client: Any) -> None:
                     await bot.check_balance()
                     await bot._random_delay()
 
-                    # Добавляем проверку подарков сразу после проверки баланса
+                    # Проверка подарков
                     bot._log('debug', 'Проверка подарков...', 'giveaway')
                     gifts_data = await bot.get_gifts()
                     await bot._random_delay()
@@ -685,7 +773,6 @@ async def run_tapper(tg_client: Any) -> None:
                     if gifts_data.get("gifts"):
                         session_name = getattr(tg_client, "session_name", "Неизвестная сессия")
                         уведомление_о_подарке = f"Обнаружен подарок на \`{session_name}\`"
-                        # Проверяем, настроен ли чат ID для уведомлений
                         if settings.get('NOTIFICATION_CHAT_ID'):
                              await bot._send_telegram_message(settings.NOTIFICATION_CHAT_ID, уведомление_о_подарке)
                         else:
@@ -697,14 +784,12 @@ async def run_tapper(tg_client: Any) -> None:
                     bot._log('debug', f'Статистика: {stats}', 'debug')
                     await bot._random_delay()
 
-                    giveaway_processor = GiveawayProcessor(bot, channel_repository)
+                    # Обработка доступных розыгрышей
                     await giveaway_processor.process_giveaways() # Этот метод теперь управляет сбором и обработкой
 
-                    # Задержка перед следующим циклом теперь после обработки всех собранных розыгрышей
-                    # Можно настроить отдельную задержку для цикла обработки розыгрышей,
-                    # чтобы не ждать CHANNEL_SUBSCRIBE_DELAY после каждого цикла парсинга.
-                    # Пока оставим так, но имейте в виду.
-                    sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 300) # Используем существующую настройку, или можно добавить новую
+                    # Задержка перед следующим циклом
+                    # Используем CHANNEL_SUBSCRIBE_DELAY как основную задержку после обработки розыгрышей
+                    sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 300)
                     bot._log('info', f'Уход на паузу перед следующим циклом на {int(sleep_duration)} секунд...', 'info')
                     await asyncio.sleep(sleep_duration)
 

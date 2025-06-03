@@ -1,6 +1,6 @@
 import aiosqlite
 import datetime # Импортируем datetime для работы с датами
-from typing import Optional, List
+from typing import Optional, List, Tuple # Добавляем Tuple для подсказки типов
 
 class ChannelRepository:
     def __init__(self, db_path: str = "channels.db"):
@@ -13,6 +13,7 @@ class ChannelRepository:
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, "
                 "session_name TEXT NOT NULL, "
                 "channel_name TEXT NOT NULL, "
+                "last_activity_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
                 "UNIQUE(session_name, channel_name))"
             )
             # Новая таблица для обработанных розыгрышей
@@ -34,10 +35,41 @@ class ChannelRepository:
             return result is not None
 
     async def add_channel(self, session_name: str, channel_name: str) -> None:
+        """Добавляет или обновляет запись о подписке на канал с текущей временной меткой."""
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
-                "INSERT OR IGNORE INTO subscribed_channels (session_name, channel_name) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO subscribed_channels (session_name, channel_name, last_activity_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
                 (session_name, channel_name)
+            )
+            await db.commit()
+
+    async def update_channel_activity(self, session_name: str, channel_name: str) -> None:
+        """Обновляет время последней активности для указанного канала и сессии."""
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "UPDATE subscribed_channels SET last_activity_at = CURRENT_TIMESTAMP WHERE session_name = ? AND channel_name = ?",
+                (session_name, channel_name)
+            )
+            await db.commit()
+
+    async def get_channels_to_leave(self, session_name: str, inactivity_hours: int) -> List[Tuple[int, str]]:
+        """Возвращает список каналов (id, channel_name) для отписки, где активность старше inactivity_hours."""
+        threshold_time = datetime.datetime.now() - datetime.timedelta(hours=inactivity_hours)
+        async with aiosqlite.connect(self._db_path) as db:
+            cursor = await db.execute(
+                "SELECT id, channel_name FROM subscribed_channels WHERE session_name = ? AND last_activity_at < ?",
+                (session_name, threshold_time.strftime('%Y-%m-%d %H:%M:%S'))
+            )
+            channels_to_leave = await cursor.fetchall()
+            await cursor.close()
+            return channels_to_leave
+
+    async def remove_channel(self, channel_id: int) -> None:
+        """Удаляет канал из базы данных по его ID."""
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "DELETE FROM subscribed_channels WHERE id = ?",
+                (channel_id,)
             )
             await db.commit()
 
@@ -75,4 +107,10 @@ class ChannelRepository:
                 '''DELETE FROM processed_giveaways WHERE processed_at < date('now', ?)''',
                 (f'-{days_to_keep} days',)
             )
-            await db.commit() 
+            await db.commit()
+
+    async def close(self) -> None:
+        """Закрывает соединение с базой данных (если оно было установлено)"""
+        # В aiosqlite контекстный менеджер async with handles closing
+        # Добавим для явности, но по сути он может быть пустой
+        pass # Соединение управляется через async with 

@@ -471,7 +471,7 @@ class UniversalTelegramClient:
             except FloodWait as e:
                 wait_time = e.value if self.is_pyrogram else e.seconds
                 logger.warning(f"{self.session_name} | FloodWait for {wait_time} seconds")
-                await asyncio.sleep(wait_time)
+                await asyncio.sleep(wait_time + uniform(1, 3))
                 return await self.join_telegram_channel(channel_data)
                 
             except (UserBannedInChannel, UsernameNotOccupied, UsernameInvalid) as e:
@@ -547,3 +547,55 @@ class UniversalTelegramClient:
                 
         except Exception as e:
             logger.warning(f"{self.session_name} | Error while configuring channel: {str(e)}")
+
+    async def leave_telegram_channel(self, channel_username: str) -> bool:
+        """Отписывается от указанного Telegram-канала по его username."""
+        if not channel_username:
+            logger.error(f"{self.session_name} | No channel username provided for leaving.")
+            return False
+
+        was_connected = self.client.is_connected if not self.is_pyrogram else self.client.is_connected
+
+        try:
+            if settings.DEBUG_LOGGING:
+                logger.debug(f"{self.session_name} | Attempting to leave channel <y>{channel_username}</y>")
+
+            if not was_connected:
+                await self.client.connect()
+
+            try:
+                if self.is_pyrogram:
+                    await self.client.leave_chat(channel_username)
+                    logger.info(f"{self.session_name} | Successfully left channel <y>{channel_username}</y> (Pyrogram).")
+                    return True
+                else:
+                    # Для Telethon нужно получить сущность канала
+                    entity = await self.client.get_entity(f'@{channel_username}')
+                    await self.client(channels.LeaveChannelRequest(channel=entity))
+                    logger.info(f"{self.session_name} | Successfully left channel <y>{channel_username}</y> (Telethon).")
+                    return True
+
+            except (ChannelPrivateError, ChannelInvalidError, UsernameNotOccupied, UsernameInvalid) as e:
+                logger.warning(f"{self.session_name} | Cannot leave channel <y>{channel_username}</y>: {str(e)}")
+                # Если канал не существует или приватный, считаем, что мы "успешно" от него избавились
+                return True # Или False, в зависимости от того, как интерпретировать "успех"
+
+            except FloodWait as e:
+                wait_time = e.value if self.is_pyrogram else e.seconds
+                logger.warning(f"{self.session_name} | FloodWait for {wait_time} seconds while leaving channel.")
+                await asyncio.sleep(wait_time + uniform(1, 3))
+                # В случае FloodWait, можно попробовать еще раз или пропустить
+                # Для простоты пока просто логируем и возвращаем False
+                return False # Не удалось отписаться сейчас из-за FloodWait
+
+            except Exception as e:
+                log_error(f"{self.session_name} | Unknown error while leaving channel <y>{channel_username}</y>: {e}")
+                return False
+
+        finally:
+            if not was_connected and (self.client.is_connected if not self.is_pyrogram else self.client.is_connected):
+                 # Отключаемся только если мы сами подключались
+                 await self.client.disconnect()
+                 await asyncio.sleep(uniform(1, 3))
+
+        return False # Добавлено на случай, если ни один return не сработает (хотя такого быть не должно)

@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     GIVEAWAY_LIST_COUNT: int = 50
     GIVEAWAY_LIST_CURSOR: str = "" # Оставить пустым для первого запроса
 
+    # Новая настройка: Максимальное количество розыгрышей для обработки за один проход сессии
+    GIVEAWAY_MAX_PER_RUN: int = 100 # Значение по умолчанию, можно настроить
+
     # Настройки для Telegram уведомлений
     NOTIFICATION_BOT_TOKEN: Optional[str] = None
     NOTIFICATION_CHAT_ID: Optional[int] = None
@@ -53,7 +56,11 @@ class Settings(BaseSettings):
     ENABLE_NOTIFICATION_BOT: bool = False
 
     # Настройка для срока хранения записей об обработанных розыгрышах (в днях)
-    PROCESSED_GIVEAWAYS_DAYS_TO_KEEP: Optional[int] = 3 
+    PROCESSED_GIVEAWAYS_DAYS_TO_KEEP: Optional[int] = 3
+
+    # Настройки для отписки от неактивных каналов
+    GIVEAWAY_CHANNEL_INACTIVITY_HOURS: int = 12 # Часов неактивности, после которых канал считается неактивным
+    GIVEAWAY_CHANNEL_LEAVE_CHECK_INTERVAL: int = 3600 # Интервал (в секундах) между проверками неактивных каналов
 
     @property
     def blacklisted_sessions(self) -> List[str]:
