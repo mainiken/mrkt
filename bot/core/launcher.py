@@ -31,6 +31,8 @@ from pyrogram.errors import (
     SessionRevoked as PyrogramSessionRevoked
 )
 
+from bot.core.unscribe import ChannelUnsubscriber
+
 init()
 shutdown_event = asyncio.Event()
 
@@ -38,19 +40,23 @@ def signal_handler(signum: int, frame) -> None:
     shutdown_event.set()
 
 START_TEXT = f"""
-{Fore.RED}ВНИМАНИЕ: Эта ферма не предназначена для продажи!{Style.RESET_ALL}
-{Fore.RED}WARNING: This farm is not for sale!{Style.RESET_ALL}
-{Fore.RED}¡ADVERTENCIA: ¡Esta granja no está a la venta!{Style.RESET_ALL}
-{Fore.RED}ATTENTION: Cette ferme n'est pas à vendre!{Style.RESET_ALL}
-{Fore.RED}ACHTUNG: Diese Farm ist nicht zum Verkauf bestimmt!{Style.RESET_ALL}
-{Fore.RED}ATTENZIONE: Questa fattoria non è in vendita!{Style.RESET_ALL}
-{Fore.RED}注意：この農場は販売用ではありません！{Style.RESET_ALL}
-{Fore.RED}주의: 이 농장은 판매용이 아닙니다!{Style.RESET_ALL}
-{Fore.RED}注意：此农场不用于销售！{Style.RESET_ALL}
-{Fore.RED}ATENÇÃO: Esta fazenda não se destina à venda!{Style.RESET_ALL}
+{Fore.RED}ВНИМАНИЕ: @brucelee23 за Pepe сразу удаляю репу!{Style.RESET_ALL}
+{Fore.RED}WARNING: @brucelee23 I'll delete Pepe's rep right away!{Style.RESET_ALL}
 
-{Fore.LIGHTMAGENTA_EX} 
-LOGO
+{Fore.LIGHTMAGENTA_EX}
+
+
+ ███▄ ▄███▓ ██▀███   ██ ▄█▀▄▄▄█████▓
+▓██▒▀█▀ ██▒▓██ ▒ ██▒ ██▄█▒ ▓  ██▒ ▓▒
+▓██    ▓██░▓██ ░▄█ ▒▓███▄░ ▒ ▓██░ ▒░
+▒██    ▒██ ▒██▀▀█▄  ▓██ █▄ ░ ▓██▓ ░ 
+▒██▒   ░██▒░██▓ ▒██▒▒██▒ █▄  ▒██▒ ░ 
+░ ▒░   ░  ░░ ▒▓ ░▒▓░▒ ▒▒ ▓▒  ▒ ░░   
+░  ░      ░  ░▒ ░ ▒░░ ░▒ ▒░    ░    
+░      ░     ░░   ░ ░ ░░ ░   ░      
+       ░      ░     ░  ░            
+                                    
+
 {Style.RESET_ALL}
 {Fore.CYAN}Select action:{Style.RESET_ALL}
 
@@ -58,8 +64,9 @@ LOGO
     {Fore.GREEN}2. Create session{Style.RESET_ALL}
     {Fore.GREEN}3. Create session via QR{Style.RESET_ALL}
     {Fore.GREEN}4. Upload sessions via web (BETA){Style.RESET_ALL}
+    {Fore.GREEN}5. Leaving ALL channels (BETA){Style.RESET_ALL}
 
-{Fore.CYAN}Developed by: @Mffff4{Style.RESET_ALL}
+{Fore.CYAN}Developed by: @mainiken{Style.RESET_ALL}
 {Fore.CYAN}Our Telegram channel: {Fore.BLUE}https://t.me/+x8gutImPtaQyN2Ey{Style.RESET_ALL}
 """
 
@@ -70,9 +77,9 @@ def prompt_user_action() -> int:
     logger.info(START_TEXT)
     while True:
         action = input("> ").strip()
-        if action.isdigit() and action in ("1", "2", "3", "4"):
+        if action.isdigit() and action in ("1", "2", "3", "4", "5"):
             return int(action)
-        logger.warning("Invalid action. Please enter a number between 1 and 4.")
+        logger.warning("Invalid action. Please enter a number between 1 and 5.")
 
 async def process() -> None:
     parser = argparse.ArgumentParser()
@@ -111,6 +118,67 @@ async def process() -> None:
             web_task.cancel()
             await stop_web_and_tunnel()
             print("Program terminated.")
+    elif action == 5:
+        if not API_ID or not API_HASH:
+             raise ValueError("API_ID and API_HASH not found in the .env file.")
+        logger.info("Анализ каналов для отписки...")
+        tg_clients = await get_tg_clients()
+        if not tg_clients:
+            logger.warning("Нет активных сессий для выполнения действия.")
+            return
+
+        # Получаем списки каналов для каждого клиента
+        client_channel_tasks = []
+        unsubscribers = {}
+        for client in tg_clients:
+            unsubscriber = ChannelUnsubscriber(client)
+            unsubscribers[client.session_name] = unsubscriber # Сохраняем экземпляр для последующего использования
+            client_channel_tasks.append(asyncio.create_task(unsubscriber.get_all_channel_usernames()))
+
+        # Ожидаем получения всех списков каналов
+        all_clients_channels = await asyncio.gather(*client_channel_tasks)
+
+        # Собираем каналы по клиентам в словарь для удобства
+        # Используем session_name как ключ для соответствия unsubscribers
+        channels_by_client = {tg_clients[i].session_name: all_clients_channels[i] for i in range(len(tg_clients))}
+
+        # Считаем общее количество уникальных каналов для подтверждения
+        all_channel_usernames_flat = [channel for channels_list in all_clients_channels for channel in channels_list]
+        total_unique_channels = len(set(all_channel_usernames_flat)) # Используем set для уникальных
+
+        if total_unique_channels == 0:
+            logger.info("Не найдено каналов для отписки по всем сессиям.")
+            return
+
+        logger.info(f"Найдено {total_unique_channels} уникальных каналов для отписки по всем сессиям.")
+
+        # Запрос подтверждения пользователя
+        while True:
+            response = input(f"Вы уверены, что хотите отписаться от всех {total_unique_channels} каналов? (y/n): ").strip().lower()
+            if response in ('y', 'yes'):
+                break
+            elif response in ('n', 'no'):
+                logger.info("Отписка отменена пользователем.")
+                return
+            else:
+                logger.warning("Неверный ввод. Пожалуйста, введите 'y' или 'n'.")
+
+        logger.info("Запуск процесса отписки...")
+
+        # Запускаем задачи отписки для каждого клиента с его списком каналов
+        unsubscription_tasks = []
+        for session_name, channels_list in channels_by_client.items():
+            if channels_list: # Запускаем отписку только если у клиента есть каналы
+                # Получаем соответствующий экземпляр Unsubscriber по session_name
+                unsubscriber = unsubscribers.get(session_name)
+                if unsubscriber:
+                    unsubscription_tasks.append(asyncio.create_task(unsubscriber.unsubscribe_from_channels(channels_list)))
+
+        # Ожидаем завершения всех задач отписки
+        unsubscribed_counts = await asyncio.gather(*unsubscription_tasks)
+        total_unsubscribed_count = sum(unsubscribed_counts)
+
+        logger.info(f"\nПроцесс отписки завершен. Успешно отписались от {total_unsubscribed_count} каналов.")
 
 async def move_invalid_session_to_error_folder(session_name: str) -> None:
     error_dir = os.path.join(SESSIONS_PATH, "error")

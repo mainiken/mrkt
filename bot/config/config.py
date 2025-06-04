@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     SUBSCRIBE_TELEGRAM: bool = True
 
     # Настройки задержки между подписками на каналы
-    CHANNEL_SUBSCRIBE_DELAY: int = 10
+    CHANNEL_SUBSCRIBE_DELAY: int = 20
 
     # Настройки для участия в бесплатных розыгрышах
     PARTICIPATE_IN_FREE_GIVEAWAYS: bool = True
@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # Новая настройка: Максимальное количество розыгрышей для обработки за один проход сессии
     GIVEAWAY_MAX_PER_RUN: int = 100 # Значение по умолчанию, можно настроить
 
+        # Настройки для отписки от неактивных каналов
+    GIVEAWAY_CHANNEL_INACTIVITY_HOURS: int = 24 # Часов неактивности, после которых канал считается неактивным
+    GIVEAWAY_CHANNEL_LEAVE_CHECK_INTERVAL: int = 3600 # Интервал (в секундах) между проверками неактивных каналов
+
     # Настройки для Telegram уведомлений
     NOTIFICATION_BOT_TOKEN: Optional[str] = None
     NOTIFICATION_CHAT_ID: Optional[int] = None
@@ -58,9 +62,7 @@ class Settings(BaseSettings):
     # Настройка для срока хранения записей об обработанных розыгрышах (в днях)
     PROCESSED_GIVEAWAYS_DAYS_TO_KEEP: Optional[int] = 3
 
-    # Настройки для отписки от неактивных каналов
-    GIVEAWAY_CHANNEL_INACTIVITY_HOURS: int = 12 # Часов неактивности, после которых канал считается неактивным
-    GIVEAWAY_CHANNEL_LEAVE_CHECK_INTERVAL: int = 3600 # Интервал (в секундах) между проверками неактивных каналов
+
 
     @property
     def blacklisted_sessions(self) -> List[str]:

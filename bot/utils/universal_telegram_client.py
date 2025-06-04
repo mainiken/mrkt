@@ -575,10 +575,10 @@ class UniversalTelegramClient:
                     logger.info(f"{self.session_name} | Successfully left channel <y>{channel_username}</y> (Telethon).")
                     return True
 
-            except (ChannelPrivateError, ChannelInvalidError, UsernameNotOccupied, UsernameInvalid) as e:
-                logger.warning(f"{self.session_name} | Cannot leave channel <y>{channel_username}</y>: {str(e)}")
-                # Если канал не существует или приватный, считаем, что мы "успешно" от него избавились
-                return True # Или False, в зависимости от того, как интерпретировать "успех"
+            except (ChannelPrivateError, ChannelInvalidError, UsernameNotOccupied, UsernameInvalid, UserNotParticipant, UserNotParticipantError) as e:
+                logger.warning(f"{self.session_name} | Cannot leave channel <y>{channel_username}</y> (user not participant or channel issue): {str(e)}")
+                # Если канал не существует, приватный, или пользователь уже не участник, считаем, что мы "успешно" от него избавились
+                return True
 
             except FloodWait as e:
                 wait_time = e.value if self.is_pyrogram else e.seconds
