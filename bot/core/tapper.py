@@ -54,6 +54,10 @@ class BaseBot:
         'giveaway': '⭐'
     }
 
+    # Добавляем атрибуты для отслеживания количества действий с каналами в текущую минуту
+    _channel_action_counts: Dict[str, int] = {"subscribe": 0, "unsubscribe": 0}
+    _channel_action_window_start: datetime.datetime = datetime.datetime.now()
+
     def __init__(self, tg_client: Any):
         self._tg_client = tg_client
         self._token: Optional[str] = None
@@ -329,6 +333,50 @@ class BaseBot:
         self._log('debug', f'Добавление случайной задержки: {delay:.2f} сек.', 'info')
         await asyncio.sleep(delay)
 
+    async def _wait_for_next_minute(self) -> None:
+        """Ожидает до начала следующей минуты для сброса лимитов действий."""
+        now = datetime.datetime.now()
+        seconds_to_next_minute = 60 - now.second
+        # Добавляем небольшую случайную задержку, чтобы избежать одновременного сброса для всех сессий
+        delay = seconds_to_next_minute + random.uniform(0, 1)
+        if delay > 0:
+            self._log('debug', f'Ожидание {delay:.2f} секунд до начала следующей минуты для сброса лимитов.', 'info')
+            await asyncio.sleep(delay)
+        # После ожидания убеждаемся, что мы действительно в следующей минуте или позже
+        self._channel_action_window_start = datetime.datetime.now()
+
+
+    async def _check_and_apply_rate_limit(self, action_type: str) -> None:
+        """Проверяет и применяет ограничение частоты для подписки/отписки."""
+        now = datetime.datetime.now()
+        # Если прошло более 60 секунд с начала текущего окна, сбрасываем счетчики
+        if (now - self._channel_action_window_start).total_seconds() >= 60:
+            self._log('debug', 'Окно минуты для действий с каналами сброшено.', 'debug')
+            self._channel_action_counts = {"subscribe": 0, "unsubscribe": 0}
+            self._channel_action_window_start = now # Новое окно начинается сейчас
+
+        current_count = self._channel_action_counts.get(action_type, 0)
+        max_limit = 0
+        if action_type == 'subscribe':
+            # Используем MAX_SUBSCRIBE_PER_MINUTE из settings, по умолчанию 40
+            max_limit = getattr(settings, 'MAX_SUBSCRIBE_PER_MINUTE', 40)
+        elif action_type == 'unsubscribe':
+             # Используем MAX_UNSUBSCRIBE_PER_MINUTE из settings, по умолчанию 40
+            max_limit = getattr(settings, 'MAX_UNSUBSCRIBE_PER_MINUTE', 40)
+        else:
+             self._log('error', f'Неизвестный тип действия для ограничения частоты: {action_type}', 'error')
+             return # Не обрабатываем неизвестные типы
+
+        if current_count >= max_limit:
+            self._log('info', f'Лимит на <y>{action_type}</y> ({max_limit} в минуту) достигнут. Ожидание до начала следующей минуты.', 'warning')
+            await self._wait_for_next_minute()
+            # После ожидания _wait_for_next_minute уже сбросил окно и счетчики
+
+        # Увеличиваем счетчик для текущего действия в текущем окне
+        self._channel_action_counts[action_type] += 1
+        self._log('debug', f'Выполнено {self._channel_action_counts[action_type]}/{max_limit} <y>{action_type}</y> действий в текущей минуте.', 'debug')
+
+
     async def _send_telegram_message(self, chat_id: str, message: str) -> bool:
         """Отправляет сообщение в Telegram чат."""
         if not hasattr(settings, 'NOTIFICATION_BOT_TOKEN') or not settings.NOTIFICATION_BOT_TOKEN:
@@ -430,6 +478,8 @@ class GiveawayProcessor:
         self._bot._log('debug', f'Попытка подписаться на канал <y>{channel_name}</y>', 'debug')
 
         try:
+            # Применяем ограничение частоты перед подпиской
+            await self._bot._check_and_apply_rate_limit("subscribe")
             # join_telegram_channel теперь сам управляет подключением/отключением и FloodWait
             channel_join_success = await self._bot._tg_client.join_telegram_channel(
                 {"additional_data": {"username": channel_name}}
@@ -696,6 +746,8 @@ class GiveawayProcessor:
 
             for channel_id, channel_name in channels_to_leave:
                 self._bot._log('debug', f'Попытка отписаться от канала <y>{channel_name}</y> (ID: {channel_id})...', 'warning')
+                # Применяем ограничение частоты перед отпиской
+                await self._bot._check_and_apply_rate_limit("unsubscribe")
                 leave_success = await self._bot._tg_client.leave_telegram_channel(channel_name)
 
                 if leave_success:

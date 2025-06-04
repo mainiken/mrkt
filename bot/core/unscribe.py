@@ -1,5 +1,6 @@
 import asyncio
 import random
+import datetime
 from typing import List
 
 from bot.utils.universal_telegram_client import UniversalTelegramClient
@@ -81,6 +82,7 @@ class ChannelUnsubscriber:
             success = False
             while not success:
                 try:
+                    await self.client._check_and_apply_rate_limit("unsubscribe")
                     success = await self.client.leave_telegram_channel(channel_username)
                     if success:
                         unsubscribed_count += 1

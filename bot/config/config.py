@@ -62,7 +62,9 @@ class Settings(BaseSettings):
     # Настройка для срока хранения записей об обработанных розыгрышах (в днях)
     PROCESSED_GIVEAWAYS_DAYS_TO_KEEP: Optional[int] = 3
 
-
+    # Настройки лимитов действий с каналами в минуту
+    MAX_SUBSCRIBE_PER_MINUTE: int = 40
+    MAX_UNSUBSCRIBE_PER_MINUTE: int = 40
 
     @property
     def blacklisted_sessions(self) -> List[str]:
