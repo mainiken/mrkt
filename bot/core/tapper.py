@@ -466,6 +466,10 @@ class GiveawayProcessor:
             return True
         if current_is_member_status == "Validated":
             await self._channel_repository.add_channel(session_name, channel_name)
+            # Обновляем метку времени участия после успешной валидации
+            await self._channel_repository.update_giveaway_participation_timestamp(
+                session_name, channel_name
+            )
             self._bot._log('info', f' Подписка на канал <y>{channel_name}</y> подтверждена.', 'success')
             # Если подписка подтверждена сервером, добавляем канал с текущей активностью
             await self._channel_repository.update_channel_activity(session_name, channel_name)
@@ -519,6 +523,10 @@ class GiveawayProcessor:
                 if updated_is_member_status == "Validated":
                     # Если валидация подтверждена после подписки, обновляем время активности
                     await self._channel_repository.update_channel_activity(session_name, channel_name)
+                    # Обновляем метку времени участия после успешной валидации
+                    await self._channel_repository.update_giveaway_participation_timestamp(
+                        session_name, channel_name
+                    )
                     self._bot._log('info', f' Подписка на канал <y>{channel_name}</y> подтверждена.', 'success')
                     return True
 
@@ -775,14 +783,17 @@ async def run_tapper(tg_client: Any) -> None:
 
     channel_repository = ChannelRepository()
     await channel_repository.initialize()
-    # Очистка старых записей об обработанных розыгрышах при старте бота
-    if hasattr(settings, 'PROCESSED_GIVEAWAYS_DAYS_TO_KEEP') and settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP is not None:
-         bot._log('info', f'Очистка старых записей об обработанных розыгрышах (старше {settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP} дней)...', 'info')
-         await channel_repository.clear_old_processed_giveaways(days_to_keep=settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP)
-         bot._log('info', 'Очистка завершена.', 'info')
-    else:
-         bot._log('warning', 'Настройка PROCESSED_GIVEAWAYS_DAYS_TO_KEEP не найдена. Пропуск очистки старых записей.', 'warning')
+    # Очистка каналов без подтвержденного участия при старте
+    bot._log('info', f'Очистка каналов без подтвержденного участия для сессии {getattr(tg_client, "session_name", "unknown_session")}...', 'info')
+    await channel_repository.clear_unparticipated_channels_on_start(getattr(tg_client, "session_name", "unknown_session"))
+    bot._log('info', 'Очистка каналов без подтвержденного участия завершена.', 'info')
 
+    if hasattr(settings, 'PROCESSED_GIVEAWAYS_DAYS_TO_KEEP') and settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP is not None:
+        bot._log('info', f'Очистка старых записей об обработанных розыгрышах (старше {settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP} дней)...', 'info')
+        await channel_repository.clear_old_processed_giveaways(days_to_keep=settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP)
+        bot._log('info', 'Очистка завершена.', 'info')
+    else:
+        bot._log('warning', 'Настройка PROCESSED_GIVEAWAYS_DAYS_TO_KEEP не найдена. Пропуск очистки старых записей.', 'warning')
 
     update_task = None
     if settings.AUTO_UPDATE:
@@ -800,11 +811,10 @@ async def run_tapper(tg_client: Any) -> None:
         await bot.auth()
 
         try:
-            giveaway_processor = GiveawayProcessor(bot, channel_repository) # Создаем экземпляр процессора розыгрышей
+            giveaway_processor = GiveawayProcessor(bot, channel_repository)
 
             while True:
                 try:
-                    # Периодически проверяем и отписываемся от неактивных каналов
                     await giveaway_processor.leave_inactive_channels()
 
                     bot._log('debug', 'Получение информации профиля...', 'info')
@@ -816,31 +826,25 @@ async def run_tapper(tg_client: Any) -> None:
                     await bot.check_balance()
                     await bot._random_delay()
 
-                    # Проверка подарков
                     bot._log('debug', 'Проверка подарков...', 'giveaway')
                     gifts_data = await bot.get_gifts()
                     await bot._random_delay()
 
-                    # Отправляем уведомление, если подарки найдены
                     if gifts_data.get("gifts"):
                         session_name = getattr(tg_client, "session_name", "Неизвестная сессия")
-                        уведомление_о_подарке = f"Обнаружен подарок на \`{session_name}\`"
+                        уведомление_о_подарке = f"Обнаружен подарок на ` {session_name} `"
                         if settings.get('NOTIFICATION_CHAT_ID'):
-                             await bot._send_telegram_message(settings.NOTIFICATION_CHAT_ID, уведомление_о_подарке)
+                            await bot._send_telegram_message(settings.NOTIFICATION_CHAT_ID, уведомление_о_подарке)
                         else:
-                             bot._log('warning', 'NOTIFICATION_CHAT_ID не настроен. Уведомление о подарке не отправлено.', 'warning')
-
+                            bot._log('warning', 'NOTIFICATION_CHAT_ID не настроен. Уведомление о подарке не отправлено.', 'warning')
 
                     bot._log('debug', 'Получение статистики подарков...', 'info')
                     stats = await bot.get_gift_statistics()
                     bot._log('debug', f'Статистика: {stats}', 'debug')
                     await bot._random_delay()
 
-                    # Обработка доступных розыгрышей
-                    await giveaway_processor.process_giveaways() # Этот метод теперь управляет сбором и обработкой
+                    await giveaway_processor.process_giveaways()
 
-                    # Задержка перед следующим циклом
-                    # Используем CHANNEL_SUBSCRIBE_DELAY как основную задержку после обработки розыгрышей
                     sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 300)
                     bot._log('info', f'Уход на паузу перед следующим циклом на {int(sleep_duration)} секунд...', 'info')
                     await asyncio.sleep(sleep_duration)
@@ -848,9 +852,6 @@ async def run_tapper(tg_client: Any) -> None:
                 except Exception as inner_e:
                     status_code = getattr(inner_e, 'status', None)
                     error_handler.handle_error(str(inner_e), error_code=status_code)
-                    # Обработчик ошибок уже включает логику сна/повтора для 401,
-                    # для других ошибок может потребоваться дополнительная логика,
-                    # но пока оставим как есть, т.к. handle_error логирует и завершает.
 
         except UnauthorizedError as auth_error:
             bot._log('warning', f'Обнаружена ошибка авторизации, остановка сессии: {auth_error}', 'warning')

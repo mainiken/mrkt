@@ -14,6 +14,7 @@ class ChannelRepository:
                 "session_name TEXT NOT NULL, "
                 "channel_name TEXT NOT NULL, "
                 "last_activity_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                "giveaway_participation_at TIMESTAMP NULL, "
                 "UNIQUE(session_name, channel_name))"
             )
             # Новая таблица для обработанных розыгрышей
@@ -38,7 +39,7 @@ class ChannelRepository:
         """Добавляет или обновляет запись о подписке на канал с текущей временной меткой."""
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
-                "INSERT OR REPLACE INTO subscribed_channels (session_name, channel_name, last_activity_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                "INSERT OR REPLACE INTO subscribed_channels (session_name, channel_name, last_activity_at, giveaway_participation_at) VALUES (?, ?, CURRENT_TIMESTAMP, NULL)",
                 (session_name, channel_name)
             )
             await db.commit()
@@ -52,12 +53,22 @@ class ChannelRepository:
             )
             await db.commit()
 
+    async def update_giveaway_participation_timestamp(
+        self, session_name: str, channel_name: str
+    ) -> None:
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "UPDATE subscribed_channels SET giveaway_participation_at = CURRENT_TIMESTAMP WHERE session_name = ? AND channel_name = ?",
+                (session_name, channel_name)
+            )
+            await db.commit()
+
     async def get_channels_to_leave(self, session_name: str, inactivity_hours: int) -> List[Tuple[int, str]]:
         """Возвращает список каналов (id, channel_name) для отписки, где активность старше inactivity_hours."""
         threshold_time = datetime.datetime.now() - datetime.timedelta(hours=inactivity_hours)
         async with aiosqlite.connect(self._db_path) as db:
             cursor = await db.execute(
-                "SELECT id, channel_name FROM subscribed_channels WHERE session_name = ? AND last_activity_at < ?",
+                "SELECT id, channel_name FROM subscribed_channels WHERE session_name = ? AND last_activity_at < ? AND giveaway_participation_at IS NOT NULL",
                 (session_name, threshold_time.strftime('%Y-%m-%d %H:%M:%S'))
             )
             channels_to_leave = await cursor.fetchall()
@@ -106,6 +117,16 @@ class ChannelRepository:
             await db.execute(
                 '''DELETE FROM processed_giveaways WHERE processed_at < date('now', ?)''',
                 (f'-{days_to_keep} days',)
+            )
+            await db.commit()
+
+    async def clear_unparticipated_channels_on_start(
+        self, session_name: str
+    ) -> None:
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "DELETE FROM subscribed_channels WHERE session_name = ? AND giveaway_participation_at IS NULL",
+                (session_name,)
             )
             await db.commit()
 
