@@ -178,27 +178,86 @@ class BaseBot:
             await self._random_delay()
             return result
 
-    async def get_me(self) -> Dict[str, Any]:
+    async def _reauthenticate(self) -> bool:
+        """Попытка повторной авторизации."""
+        self._log('info', 'Попытка повторной авторизации...', 'info')
+        try:
+            await self.auth()
+            self._log('success', 'Повторная авторизация успешна.', 'success')
+            return True
+        except Exception as e:
+            self._log('error', f'Повторная авторизация не удалась: {e}', 'error')
+            return False
+
+    async def _make_api_request(
+        self,
+        method: str,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        json_data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        retries: int = 2
+    ) -> Dict[str, Any]:
+        """Универсальный метод для выполнения API запросов с обработкой 401 и повторной авторизацией."""
         client = await self._get_http_client()
-        headers = self.DEFAULT_HEADERS.copy()
-        headers["authorization"] = self.token
-        async with client.get(self.ME_URL, headers=headers) as resp:
-            if resp.status != 200:
-                raise Exception(f"Не удалось получить информацию о пользователе: {resp.status} {await resp.text()}")
-            result = await resp.json()
-            await self._random_delay()
-            return result
+        current_headers = self.DEFAULT_HEADERS.copy()
+        if self.token:
+            current_headers["authorization"] = self.token
+        if headers:
+            current_headers.update(headers)
+
+        for attempt in range(retries + 1):
+            try:
+                response = None
+                if method == 'GET':
+                    response = await client.get(url, headers=current_headers, params=params)
+                elif method == 'POST':
+                    response = await client.post(url, headers=current_headers, json=json_data, params=params)
+                else:
+                    raise ValueError(f"Неподдерживаемый HTTP метод: {method}")
+
+                async with response as resp:
+                    resp.raise_for_status()
+                    return await resp.json()
+
+            except aiohttp.ClientResponseError as e:
+                if e.status == 401:
+                    if attempt < retries:
+                        self._log('warning', f'Получен 401 Unauthorized. Попытка повторной авторизации (попытка {attempt + 1}/{retries})...', 'warning')
+                        if await self._reauthenticate():
+                            current_headers["authorization"] = self.token
+                            continue
+                        else:
+                            self._log('error', 'Повторная авторизация не удалась. Отправка UnauthorizedError.', 'error')
+                            raise UnauthorizedError(f"Повторная авторизация не удалась после 401: {e.message}")
+                    else:
+                        # Если 401 получен и попытки исчерпаны, или повторная авторизация не удалась
+                        self._log('error', f'Повторная авторизация не удалась после 401 или исчерпаны попытки. Отправка UnauthorizedError: {e.message}', 'error')
+                        raise UnauthorizedError(f"Авторизация не удалась после 401 и всех попыток: {e.message}")
+                else:
+                    self._log('error', f'Ошибка при выполнении запроса ({method} {url}): {e.status} {e.message}', 'error')
+                    raise Exception(f"Не удалось выполнить запрос: {e.status} {e.message}")
+
+            except Exception as e:
+                self._log('error', f'Критическая ошибка сети или другая ошибка при запросе ({method} {url}): {e}', 'error')
+                raise
+
+        self._log('error', f'Непредвиденное завершение _make_api_request без возврата или исключения после {retries} попыток.', 'error')
+        raise Exception("Непредвиденное завершение _make_api_request")
+
+    async def get_me(self) -> Dict[str, Any]:
+        self._log('debug', 'Получение информации о пользователе...', 'info')
+        result = await self._make_api_request('GET', self.ME_URL)
+        self._log('debug', f'Информация о пользователе получена: {result}', 'debug')
+        await self._random_delay()
+        return result
 
     async def get_balance(self) -> Dict[str, Any]:
-        client = await self._get_http_client()
-        headers = self.DEFAULT_HEADERS.copy()
-        headers["authorization"] = self.token
-        async with client.get(self.BALANCE_URL, headers=headers) as resp:
-            if resp.status != 200:
-                raise Exception(f"Не удалось получить баланс: {resp.status} {await resp.text()}")
-            result = await resp.json()
-            await self._random_delay()
-            return result
+        self._log('debug', 'Получение баланса...', 'balance')
+        result = await self._make_api_request('GET', self.BALANCE_URL)
+        self._log('debug', f'Баланс получен: {result}', 'debug')
+        await self._random_delay()
+        return result
 
     async def check_balance(self) -> float:
         balance = await self.get_balance()
@@ -209,34 +268,22 @@ class BaseBot:
         return ton
 
     async def check_wallet(self, ton: str, device_id: str) -> Dict[str, Any]:
-        client = await self._get_http_client()
-        headers = self.DEFAULT_HEADERS.copy()
-        headers["authorization"] = self.token
+        self._log('debug', f'Проверка кошелька с TON: {ton} и Device ID: {device_id}...', 'info')
         data = {"ton": ton, "deviceId": device_id}
-        async with client.post(self.WALLET_URL, headers=headers, json=data) as resp:
-            if resp.status != 200:
-                raise Exception(f"Не удалось проверить кошелек: {resp.status} {await resp.text()}")
-            result = await resp.json()
-            await self._random_delay()
-            return result
+        result = await self._make_api_request('POST', self.WALLET_URL, json_data=data)
+        self._log('debug', f'Кошелек проверен: {result}', 'debug')
+        await self._random_delay()
+        return result
 
     async def get_gift_statistics(self) -> Dict[str, Any]:
-        client = await self._get_http_client()
-        headers = self.DEFAULT_HEADERS.copy()
-        headers["authorization"] = self.token
-        async with client.get(self.GIFT_STATISTICS_URL, headers=headers) as resp:
-            if resp.status != 200:
-                raise Exception(f"Не удалось получить статистику подарков: {resp.status} {await resp.text()}")
-            result = await resp.json()
-            await self._random_delay()
-            return result
+        self._log('debug', 'Получение статистики подарков...', 'info')
+        result = await self._make_api_request('GET', self.GIFT_STATISTICS_URL)
+        self._log('debug', f'Статистика подарков получена: {result}', 'debug')
+        await self._random_delay()
+        return result
 
     async def get_gifts(self) -> Dict[str, Any]:
         """Получает список подарков для текущей сессии."""
-        client = await self._get_http_client()
-        headers = self.DEFAULT_HEADERS.copy()
-        headers["authorization"] = self.token
-        # Payload из предоставленного curl запроса
         payload = {
             "isListed": False,
             "count": 20,
@@ -254,78 +301,54 @@ class BaseBot:
             "query": None
         }
         self._log('debug', 'Попытка получения списка подарков...', 'giveaway')
-        async with client.post(self.GIFTS_URL, headers=headers, json=payload) as resp:
-            self._log('debug', f'Статус ответа получения подарков: {resp.status}', 'giveaway')
-            if resp.status != 200:
-                response_text = await resp.text()
-                self._log('error', f'Не удалось получить список подарков: {resp.status} {response_text}', 'error')
-                return {"gifts": [], "cursor": None, "total": 0}
-
-            result: Dict[str, Any] = await resp.json()
-            gifts_count = len(result.get("gifts", []))
-            self._log('debug', f'Получено {gifts_count} подарков.', 'giveaway')
-            if gifts_count > 0:
-                self._log('info', f'Обнаружен подарок на "{getattr(self._tg_client, "session_name", "Неизвестная сессия")}"', 'giveaway') # Логируем обнаружение подарков
-
-            await self._random_delay()
-            return result
+        result = await self._make_api_request('POST', self.GIFTS_URL, json_data=payload)
+        gifts_count = len(result.get("gifts", []))
+        self._log('debug', f'Получено {gifts_count} подарков.', 'giveaway')
+        if gifts_count > 0:
+            self._log('info', f'Обнаружен подарок на "{getattr(self._tg_client, "session_name", "Неизвестная сессия")}"', 'giveaway')
+        await self._random_delay()
+        return result
 
     async def get_giveaways_page(self, giveaway_type: str = "Available", count: int = 20, cursor: str = "") -> Dict[str, Any]:
         """Получает одну страницу розыгрышей."""
-        client = await self._get_http_client()
-        headers = self.DEFAULT_HEADERS.copy()
-        headers["authorization"] = self.token
         params = {"type": giveaway_type, "count": count, "cursor": cursor}
         self._log('debug', f'Получение страницы розыгрышей с параметрами: {params}', 'giveaway')
-        async with client.get(self.GIVEAWAYS_URL, headers=headers, params=params) as resp:
-            if resp.status != 200:
-                raise Exception(f"Не удалось получить страницу розыгрышей: {resp.status} {await resp.text()}")
-            result: Dict[str, Any] = await resp.json()
-            self._log('debug', f'Получено {len(result.get("items", []))} розыгрышей на странице.', 'giveaway')
-            await self._random_delay()
-            return result
+        result = await self._make_api_request('GET', self.GIVEAWAYS_URL, params=params)
+        self._log('debug', f'Получено {len(result.get("items", []))} розыгрышей на странице.', 'giveaway')
+        await self._random_delay()
+        return result
 
     async def check_giveaway_validations(self, giveaway_id: str) -> Dict[str, Any]:
-        client = await self._get_http_client()
-        headers = self.DEFAULT_HEADERS.copy()
-        headers["authorization"] = self.token
         url = f"{self.GIVEAWAY_VALIDATIONS_URL}/{giveaway_id}"
         self._log('debug', f'Проверка условий розыгрыша {giveaway_id}', 'giveaway')
-        async with client.get(url, headers=headers) as resp:
-            if resp.status != 200:
-                raise Exception(f"Не удалось проверить условия розыгрыша: {resp.status} {await resp.text()}")
-            result: Dict[str, Any] = await resp.json()
-            await self._random_delay()
-            return result
+        result = await self._make_api_request('GET', url)
+        self._log('debug', f'Условия розыгрыша {giveaway_id} проверены.', 'debug')
+        await self._random_delay()
+        return result
 
     async def start_giveaway_validation(self, giveaway_id: str, channel: str, validation_type: str) -> Dict[str, str]:
-        client = await self._get_http_client()
-        headers = self.DEFAULT_HEADERS.copy()
-        headers["authorization"] = self.token
         url = f"{self.GIVEAWAY_START_VALIDATION_URL}/{giveaway_id}?channel={channel}&type={validation_type}"
         self._log('debug', f'Запуск валидации для розыгрыша {giveaway_id}, канала {channel}, типа {validation_type}', 'giveaway')
-        async with client.post(url, headers=headers) as resp:
-            response_text = await resp.text()
-            if resp.status != 200:
-                return {"status": "Failed", "message": response_text}
+        try:
+            await self._make_api_request('POST', url)
+            self._log('debug', f'Валидация для розыгрыша {giveaway_id}, канала {channel} успешно запущена.', 'debug')
             await self._random_delay()
             return {"status": "Success"}
+        except Exception as e:
+            self._log('info', f'Серверная валидация канала {channel} не запущена: {e}', 'warning')
+            return {"status": "Failed", "message": str(e)}
 
     async def join_giveaway(self, giveaway_id: str, giveaway_title: Optional[str] = None) -> Dict[str, Any]:
-        client = await self._get_http_client()
-        headers = self.DEFAULT_HEADERS.copy()
-        headers["authorization"] = self.token
         url = f"{self.GIVEAWAY_BUY_TICKETS_URL}/{giveaway_id}?count=1"
         self._log('debug', f'Попытка присоединиться к розыгрышу {giveaway_title or giveaway_id}', 'giveaway')
-        async with client.post(url, headers=headers) as resp:
-            if resp.status != 200:
-                response_text = await resp.text()
-                self._log('info', f'Не удалось присоединиться к розыгрышу {giveaway_title or giveaway_id}: {resp.status} {response_text}', 'warning')
-                return {"success": False, "status": resp.status, "message": response_text}
-            result: Dict[str, Any] = await resp.json()
-            self._log('info', f' Успешно присоединились к розыгрышу ⚡<y>{giveaway_title or giveaway_id}</y>!', 'success')
+        try:
+            result = await self._make_api_request('POST', url)
+            self._log('info', f'Успешно присоединились к розыгрышу ⚡<y>{giveaway_title or giveaway_id}</y>!', 'success')
             await self._random_delay()
             return {"success": True, "result": result}
+        except Exception as e:
+            self._log('info', f'Не удалось присоединиться к розыгрышу {giveaway_title or giveaway_id}: {e}', 'warning')
+            return {"success": False, "status": getattr(e, 'status', 0), "message": str(e)}
 
     async def _random_delay(self) -> None:
         """Добавляет случайную задержку между 1 и 3 секундами."""
