@@ -100,6 +100,8 @@ python main.py
 | `CHECK_UPDATE_INTERVAL`  | `300`                      | Интервал обновлений (в секундах)         |
 | `NOTIFICATION_BOT_TOKEN` |                            | Токен Telegram-бота для уведомлений      |
 | `NOTIFICATION_CHAT_ID`   |                            | Chat ID для получения уведомлений         |
+| `BLACKLIST_GIFT_COLLECTION_NAMES` | `""`                       | Названия коллекций подарков, которые следует игнорировать (через запятую) |
+| `UNSUBSCRIBE_FROM_INACTIVE_CHANNELS` | `False`                    | Автоматически отписываться от неактивных каналов |
 
 ### Настройка Telegram-уведомлений
 

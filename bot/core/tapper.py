@@ -427,32 +427,42 @@ class GiveawayProcessor:
                 self._bot._log('debug', 'Пропускаем розыгрыш без ID.', 'warning')
                 continue
 
+            giveaway_title = giveaway.get("previewGift", {}).get("title", "Неизвестно")
+            collection_name = giveaway.get("previewGift", {}).get("collectionName", "")
+
+            # Проверка на черный список коллекций подарков
+            if settings.blacklisted_gift_collection_names and collection_name in settings.blacklisted_gift_collection_names:
+                self._bot._log('info', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) из-за нахождения коллекции "{collection_name}" в черном списке.', 'warning')
+                continue
+
             # Проверка условий фильтрации на основе настроек
             is_boost_required = giveaway.get("isChanelBoostRequired", False)
             is_premium_required = giveaway.get("isForPremium", False)
             is_active_trader_required = giveaway.get("isForActiveTraders", False)
 
-            if hasattr(settings, 'GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED') and settings.GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED and is_boost_required:
-                self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway.get("previewGift", {}).get("title", "Неизвестно")}" (ID: {giveaway_id}) так как требуется буст канала и включена настройка пропуска.', 'debug')
+            # Если требуется буст канала и настройка GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED включена, пропускаем
+            if settings.GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED and is_boost_required:
+                self._bot._log('info', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как требуется буст канала и включена настройка пропуска.', 'warning')
                 continue
 
-            if hasattr(settings, 'PARTICIPATE_IN_FREE_GIVEAWAYS') and settings.PARTICIPATE_IN_FREE_GIVEAWAYS and (is_premium_required or is_active_trader_required):
-                 self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway.get("previewGift", {}).get("title", "Неизвестно")}" (ID: {giveaway_id}) так как он не является бесплатным.', 'debug')
+            # Если участвуем только в бесплатных и розыгрыш не бесплатный (требует премиум или активного трейдера), пропускаем
+            if settings.PARTICIPATE_IN_FREE_GIVEAWAYS and (is_premium_required or is_active_trader_required):
+                 self._bot._log('info', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как он не является бесплатным (требует премиум/активного трейдера).', 'warning')
                  continue
 
             # Проверка на минимальное и максимальное количество участников
             participants_count = giveaway.get("participantsCount", 0)
-            if hasattr(settings, 'GIVEAWAY_MIN_PARTICIPANTS') and participants_count < settings.GIVEAWAY_MIN_PARTICIPANTS:
-                 self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway.get("previewGift", {}).get("title", "Неизвестно")}" (ID: {giveaway_id}) так как количество участников ({participants_count}) меньше минимального ({settings.GIVEAWAY_MIN_PARTICIPANTS}).', 'debug')
+            if participants_count < settings.GIVEAWAY_MIN_PARTICIPANTS:
+                 self._bot._log('info', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как количество участников ({participants_count}) меньше минимального ({settings.GIVEAWAY_MIN_PARTICIPANTS}).', 'warning')
                  continue
 
-            if hasattr(settings, 'GIVEAWAY_MAX_PARTICIPANTS') and participants_count > settings.GIVEAWAY_MAX_PARTICIPANTS:
-                 self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway.get("previewGift", {}).get("title", "Неизвестно")}" (ID: {giveaway_id}) так как количество участников ({participants_count}) больше максимального ({settings.GIVEAWAY_MAX_PARTICIPANTS}).', 'debug')
+            if participants_count > settings.GIVEAWAY_MAX_PARTICIPANTS:
+                 self._bot._log('info', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как количество участников ({participants_count}) больше максимального ({settings.GIVEAWAY_MAX_PARTICIPANTS}).', 'warning')
                  continue
 
 
             filtered.append(giveaway)
-            self._bot._log('debug', f'Найден розыгрыш, подходящий по фильтрам: "{giveaway.get("previewGift", {}).get("title", "Неизвестно")}" (ID: {giveaway_id})', 'giveaway')
+            self._bot._log('debug', f'Найден розыгрыш, подходящий по фильтрам: "{giveaway_title}" (ID: {giveaway_id})', 'giveaway')
         return filtered
 
     async def _check_and_fulfill_channel_validation(
@@ -550,11 +560,11 @@ class GiveawayProcessor:
             validations = await self._bot.check_giveaway_validations(giveaway_id)
             can_join = True
 
-            if hasattr(settings, 'GIVEAWAY_REQUIRE_PREMIUM') and settings.GIVEAWAY_REQUIRE_PREMIUM and not validations.get("isPremium", False):
+            if settings.GIVEAWAY_REQUIRE_PREMIUM and not validations.get("isPremium", False):
                 self._bot._log('info', f'Розыгрыш <y>{giveaway_title}</y> требует премиум, пользователь не премиум.', 'warning')
                 can_join = False
 
-            if can_join and hasattr(settings, 'GIVEAWAY_REQUIRE_ACTIVE_TRADER') and settings.GIVEAWAY_REQUIRE_ACTIVE_TRADER and not validations.get("isActiveTrader", False):
+            if can_join and settings.GIVEAWAY_REQUIRE_ACTIVE_TRADER and not validations.get("isActiveTrader", False):
                 self._bot._log('info', f'Розыгрыш <y>{giveaway_title}</y> требует активного трейдера, пользователь не активный трейдер.', 'warning')
                 can_join = False
 
@@ -568,8 +578,8 @@ class GiveawayProcessor:
                     is_member = channel_validation.get("isMember")
                     is_boosted = channel_validation.get("isBoosted")
 
-                    if hasattr(settings, 'GIVEAWAY_REQUIRE_CHANNEL_BOOST') and settings.GIVEAWAY_REQUIRE_CHANNEL_BOOST and is_boosted != "Validated":
-                        if not (hasattr(settings, 'GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED') and settings.GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED):
+                    if settings.GIVEAWAY_REQUIRE_CHANNEL_BOOST and is_boosted != "Validated":
+                        if not settings.GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED:
                             self._bot._log('info', f'Розыгрыш <y>{giveaway_title}</y> требует буст канала <y>{channel_name}</y>, но буст не подтвержден.', 'warning')
                             can_join = False
                             break
@@ -709,6 +719,7 @@ class GiveawayProcessor:
         try:
             # Собираем уникальные розыгрыши до появления повторов или пустого списка
             giveaway_list = await self._collect_giveaways_until_repeat()
+            giveaway_list = await self._filter_giveaways(giveaway_list)
 
             if not giveaway_list:
                 self._bot._log('debug', 'Нет новых розыгрышей для обработки.', 'giveaway')
@@ -784,12 +795,12 @@ async def run_tapper(tg_client: Any) -> None:
     channel_repository = ChannelRepository()
     await channel_repository.initialize()
     # Очистка каналов без подтвержденного участия при старте
-    bot._log('info', f'Очистка каналов без подтвержденного участия для сессии {getattr(tg_client, "session_name", "unknown_session")}...', 'info')
+    bot._log('debug', f'Очистка каналов без подтвержденного участия для сессии {getattr(tg_client, "session_name", "unknown_session")}...', 'info')
     await channel_repository.clear_unparticipated_channels_on_start(getattr(tg_client, "session_name", "unknown_session"))
-    bot._log('info', 'Очистка каналов без подтвержденного участия завершена.', 'info')
+    bot._log('debug', 'Очистка каналов без подтвержденного участия завершена.', 'info')
 
     if hasattr(settings, 'PROCESSED_GIVEAWAYS_DAYS_TO_KEEP') and settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP is not None:
-        bot._log('info', f'Очистка старых записей об обработанных розыгрышах (старше {settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP} дней)...', 'info')
+        bot._log('debug', f'Очистка старых записей об обработанных розыгрышах (старше {settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP} дней)...', 'info')
         await channel_repository.clear_old_processed_giveaways(days_to_keep=settings.PROCESSED_GIVEAWAYS_DAYS_TO_KEEP)
         bot._log('info', 'Очистка завершена.', 'info')
     else:
@@ -815,7 +826,10 @@ async def run_tapper(tg_client: Any) -> None:
 
             while True:
                 try:
-                    await giveaway_processor.leave_inactive_channels()
+                    if settings.UNSUBSCRIBE_FROM_INACTIVE_CHANNELS:
+                        await giveaway_processor.leave_inactive_channels()
+                    else:
+                        bot._log('info', 'Отписка от неактивных каналов отключена в настройках.', 'info')
 
                     bot._log('debug', 'Получение информации профиля...', 'info')
                     me = await bot.get_me()

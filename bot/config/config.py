@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     # Настройки для получения списка розыгрышей
     GIVEAWAY_LIST_TYPE: str = "Free" # e.g., "Available", "Joined", "Winning", "Free"
-    GIVEAWAY_LIST_COUNT: int = 50
+    GIVEAWAY_LIST_COUNT: int = 20
     GIVEAWAY_LIST_CURSOR: str = "" # Оставить пустым для первого запроса
 
     # Новая настройка: Максимальное количество розыгрышей для обработки за один проход сессии
@@ -62,12 +62,22 @@ class Settings(BaseSettings):
     # Настройка для срока хранения записей об обработанных розыгрышах (в днях)
     PROCESSED_GIVEAWAYS_DAYS_TO_KEEP: Optional[int] = 3
 
+    # Новая настройка: Отключение отписки от неактивных каналов из БД
+    UNSUBSCRIBE_FROM_INACTIVE_CHANNELS: bool = True
+
     # Настройки лимитов действий с каналами в минуту
-    MAX_SUBSCRIBE_PER_MINUTE: int = 40
-    MAX_UNSUBSCRIBE_PER_MINUTE: int = 40
+    MAX_SUBSCRIBE_PER_MINUTE: int = 10
+    MAX_UNSUBSCRIBE_PER_MINUTE: int = 5
+
+    # Настройка для игнорирования розыгрышей по названию коллекции подарка (через запятую)
+    BLACKLIST_GIFT_COLLECTION_NAMES: str = "Lol Pop, Desk Calendar, B-Day Candle, Xmas Stocking, Lunar Snake"
 
     @property
     def blacklisted_sessions(self) -> List[str]:
         return [s.strip() for s in self.BLACKLISTED_SESSIONS.split(',') if s.strip()]
+
+    @property
+    def blacklisted_gift_collection_names(self) -> List[str]:
+        return [s.strip() for s in self.BLACKLIST_GIFT_COLLECTION_NAMES.split(',') if s.strip()]
 
 settings = Settings()
