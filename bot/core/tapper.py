@@ -442,22 +442,22 @@ class GiveawayProcessor:
 
             # Если требуется буст канала и настройка GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED включена, пропускаем
             if settings.GIVEAWAY_SKIP_CHANNEL_BOOST_REQUIRED and is_boost_required:
-                self._bot._log('info', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как требуется буст канала и включена настройка пропуска.', 'warning')
+                self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как требуется буст канала и включена настройка пропуска.', 'warning')
                 continue
 
             # Если участвуем только в бесплатных и розыгрыш не бесплатный (требует премиум или активного трейдера), пропускаем
             if settings.PARTICIPATE_IN_FREE_GIVEAWAYS and (is_premium_required or is_active_trader_required):
-                 self._bot._log('info', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как он не является бесплатным (требует премиум/активного трейдера).', 'warning')
+                 self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как он не является бесплатным (требует премиум/активного трейдера).', 'warning')
                  continue
 
             # Проверка на минимальное и максимальное количество участников
             participants_count = giveaway.get("participantsCount", 0)
             if participants_count < settings.GIVEAWAY_MIN_PARTICIPANTS:
-                 self._bot._log('info', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как количество участников ({participants_count}) меньше минимального ({settings.GIVEAWAY_MIN_PARTICIPANTS}).', 'warning')
+                 self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как количество участников ({participants_count}) меньше минимального ({settings.GIVEAWAY_MIN_PARTICIPANTS}).', 'warning')
                  continue
 
             if participants_count > settings.GIVEAWAY_MAX_PARTICIPANTS:
-                 self._bot._log('info', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как количество участников ({participants_count}) больше максимального ({settings.GIVEAWAY_MAX_PARTICIPANTS}).', 'warning')
+                 self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) так как количество участников ({participants_count}) больше максимального ({settings.GIVEAWAY_MAX_PARTICIPANTS}).', 'warning')
                  continue
 
 
