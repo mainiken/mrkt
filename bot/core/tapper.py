@@ -432,7 +432,7 @@ class GiveawayProcessor:
 
             # Проверка на черный список коллекций подарков
             if settings.blacklisted_gift_collection_names and collection_name in settings.blacklisted_gift_collection_names:
-                self._bot._log('info', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) из-за нахождения коллекции "{collection_name}" в черном списке.', 'warning')
+                self._bot._log('debug', f'Пропускаем розыгрыш "{giveaway_title}" (ID: {giveaway_id}) из-за нахождения коллекции "{collection_name}" в черном списке.', 'warning')
                 continue
 
             # Проверка условий фильтрации на основе настроек
