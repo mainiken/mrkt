@@ -591,9 +591,21 @@ class GiveawayProcessor:
                 self._bot._log('info', f'Розыгрыш <y>{giveaway_title}</y> требует активного трейдера, пользователь не активный трейдер.', 'warning')
                 can_join = False
 
-            channel_validations = validations.get("channelValidations", [])
+            # Объединяем каналы из validations и из корневого объекта giveaway
+            channels_to_process: List[Dict[str, Any]] = []
+            if validations.get("channelValidations", []):
+                channels_to_process.extend(validations.get("channelValidations", []))
+            
+            # Добавляем каналы из поля "chanels" корневого объекта giveaway, если их нет в channel_validations
+            # Или если channel_validations вообще отсутствует/пуст
+            giveaway_channels = giveaway.get("chanels", [])
+            for gc_name in giveaway_channels:
+                # Проверяем, есть ли этот канал уже в channels_to_process
+                if not any(cv.get("channel") == gc_name for cv in channels_to_process):
+                    channels_to_process.append({"channel": gc_name, "isMember": None, "isBoosted": None}) # isMember и isBoosted будут определены при проверке
+
             if can_join:
-                for channel_validation in channel_validations:
+                for channel_validation in channels_to_process:
                     channel_name = channel_validation.get("channel")
                     if not channel_name:
                         continue
@@ -617,19 +629,22 @@ class GiveawayProcessor:
 
                 if can_join:
                     join_result = await self._bot.join_giveaway(giveaway_id, giveaway_title)
-                    if not join_result.get("success"):
-                        self._bot._log('info', f'Не удалось принять участие в розыгрыше <y>{giveaway_title}</y>: {join_result.get("message", "Ошибка")}', 'warning')
+                    if join_result.get("success"):
+                        # Проверяем validationStatus из исходного объекта розыгрыша для "корректной" обработки
+                        if giveaway.get("validationStatus") == "Validated":
+                            self._bot._log('info', f'Успешно присоединились к розыгрышу ⚡<y>{giveaway_title}</y> (validationStatus: Validated)!', 'success')
+                            session_name = getattr(self._bot._tg_client, "session_name", "unknown_session")
+                            for channel_validation in channels_to_process:
+                                 channel_name = channel_validation.get("channel")
+                                 if channel_name:
+                                      await self._channel_repository.update_channel_activity(session_name, channel_name)
+                                      self._bot._log('debug', f'Время активности для канала <y>{channel_name}</y> обновлено после присоединения к розыгрышу <y>{giveaway_title}</y>.', 'debug')
+                        else:
+                            self._bot._log('warning', f'Присоединились к розыгрышу <y>{giveaway_title}</y>, но его "validationStatus" не "Validated" (фактический статус: {giveaway.get("validationStatus")}).', 'warning')
                     else:
-                        # Если успешно присоединились, обновляем время активности для ВСЕХ каналов этого розыгрыша
-                        session_name = getattr(self._bot._tg_client, "session_name", "unknown_session")
-                        for channel_validation in channel_validations:
-                             channel_name = channel_validation.get("channel")
-                             if channel_name:
-                                  await self._channel_repository.update_channel_activity(session_name, channel_name)
-                                  self._bot._log('debug', f'Время активности для канала <y>{channel_name}</y> обновлено после присоединения к розыгрышу <y>{giveaway_title}</y>.', 'debug')
+                        self._bot._log('info', f'Не удалось принять участие в розыгрыше <y>{giveaway_title}</y>: {join_result.get("message", "Ошибка")}', 'warning')
 
-
-                    # После попытки присоединения, помечаем розыгрыш как обработанный
+                    # Всегда помечаем как обработанный после попытки (успешной или нет, с валидацией или без)
                     await self._channel_repository.add_processed_giveaway(giveaway_id)
                     self._bot._log('debug', f'Розыгрыш <y>{giveaway_title}</y> (ID: {giveaway_id}) помечен как обработанный.', 'info')
 
@@ -882,7 +897,7 @@ async def run_tapper(tg_client: Any) -> None:
 
                     await giveaway_processor.process_giveaways()
 
-                    sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 300)
+                    sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 3000)
                     bot._log('info', f'Уход на паузу перед следующим циклом на {int(sleep_duration)} секунд...', 'info')
                     await asyncio.sleep(sleep_duration)
 
