@@ -897,7 +897,7 @@ async def run_tapper(tg_client: Any) -> None:
 
                     await giveaway_processor.process_giveaways()
 
-                    sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 3000)
+                    sleep_duration = settings.CHANNEL_SUBSCRIBE_DELAY + random.uniform(0, 1000)
                     bot._log('info', f'Уход на паузу перед следующим циклом на {int(sleep_duration)} секунд...', 'info')
                     await asyncio.sleep(sleep_duration)
 
