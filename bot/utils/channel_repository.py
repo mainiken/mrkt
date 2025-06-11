@@ -23,6 +23,15 @@ class ChannelRepository:
                 "giveaway_id TEXT NOT NULL UNIQUE, "
                 "processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
             )
+            # Новая таблица для ожидающих обработки розыгрышей
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS pending_giveaways ("
+                "session_name TEXT NOT NULL, "
+                "giveaway_id TEXT NOT NULL, "
+                "giveaway_data TEXT NOT NULL, "
+                "added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                "PRIMARY KEY (session_name, giveaway_id))"
+            )
             await db.commit()
 
     async def is_subscribed(self, session_name: str, channel_name: str) -> bool:
@@ -36,7 +45,6 @@ class ChannelRepository:
             return result is not None
 
     async def add_channel(self, session_name: str, channel_name: str) -> None:
-        """Добавляет или обновляет запись о подписке на канал с текущей временной меткой."""
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO subscribed_channels (session_name, channel_name, last_activity_at, giveaway_participation_at) VALUES (?, ?, CURRENT_TIMESTAMP, NULL)",
@@ -45,7 +53,6 @@ class ChannelRepository:
             await db.commit()
 
     async def update_channel_activity(self, session_name: str, channel_name: str) -> None:
-        """Обновляет время последней активности для указанного канала и сессии."""
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
                 "UPDATE subscribed_channels SET last_activity_at = CURRENT_TIMESTAMP WHERE session_name = ? AND channel_name = ?",
@@ -64,7 +71,6 @@ class ChannelRepository:
             await db.commit()
 
     async def get_channels_to_leave(self, session_name: str, inactivity_hours: int) -> List[Tuple[int, str]]:
-        """Возвращает список каналов (id, channel_name) для отписки, где активность старше inactivity_hours."""
         threshold_time = datetime.datetime.now() - datetime.timedelta(hours=inactivity_hours)
         async with aiosqlite.connect(self._db_path) as db:
             cursor = await db.execute(
@@ -76,7 +82,6 @@ class ChannelRepository:
             return channels_to_leave
 
     async def remove_channel(self, channel_id: int) -> None:
-        """Удаляет канал из базы данных по его ID."""
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
                 "DELETE FROM subscribed_channels WHERE id = ?",
@@ -84,10 +89,7 @@ class ChannelRepository:
             )
             await db.commit()
 
-    # Новые методы для работы с обработанными розыгрышами
-
     async def add_processed_giveaway(self, giveaway_id: str) -> None:
-        """Добавляет ID обработанного розыгрыша в базу данных."""
         async with aiosqlite.connect(self._db_path) as db:
             try:
                 await db.execute(
@@ -96,11 +98,9 @@ class ChannelRepository:
                 )
                 await db.commit()
             except aiosqlite.IntegrityError:
-                # Розыгрыш уже в базе, игнорируем ошибку
                 pass
 
     async def is_giveaway_processed(self, giveaway_id: str) -> bool:
-        """Проверяет, был ли уже обработан розыгрыш по ID."""
         async with aiosqlite.connect(self._db_path) as db:
             cursor = await db.execute(
                 'SELECT 1 FROM processed_giveaways WHERE giveaway_id = ?',
@@ -111,12 +111,51 @@ class ChannelRepository:
             return row is not None
 
     async def clear_old_processed_giveaways(self, days_to_keep: int) -> None:
-        """Удаляет записи об обработанных розыгрышах старше заданного количества дней."""
         async with aiosqlite.connect(self._db_path) as db:
-            # Используем функцию SQLite date() для работы с датами
             await db.execute(
                 '''DELETE FROM processed_giveaways WHERE processed_at < date('now', ?)''',
                 (f'-{days_to_keep} days',)
+            )
+            await db.commit()
+
+    async def add_pending_giveaway(self, session_name: str, giveaway_id: str, giveaway_data: dict) -> None:
+        async with aiosqlite.connect(self._db_path) as db:
+            try:
+                import json
+                await db.execute(
+                    "INSERT INTO pending_giveaways (session_name, giveaway_id, giveaway_data) VALUES (?, ?, ?)",
+                    (session_name, giveaway_id, json.dumps(giveaway_data))
+                )
+                await db.commit()
+            except aiosqlite.IntegrityError:
+                pass
+
+    async def is_giveaway_pending(self, session_name: str, giveaway_id: str) -> bool:
+        async with aiosqlite.connect(self._db_path) as db:
+            cursor = await db.execute(
+                "SELECT 1 FROM pending_giveaways WHERE session_name = ? AND giveaway_id = ?",
+                (session_name, giveaway_id)
+            )
+            result = await cursor.fetchone()
+            await cursor.close()
+            return result is not None
+
+    async def get_pending_giveaways(self, session_name: str) -> List[dict]:
+        async with aiosqlite.connect(self._db_path) as db:
+            cursor = await db.execute(
+                "SELECT giveaway_data FROM pending_giveaways WHERE session_name = ? ORDER BY added_at ASC",
+                (session_name,)
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+            import json
+            return [json.loads(row[0]) for row in rows]
+
+    async def remove_pending_giveaway(self, session_name: str, giveaway_id: str) -> None:
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "DELETE FROM pending_giveaways WHERE session_name = ? AND giveaway_id = ?",
+                (session_name, giveaway_id)
             )
             await db.commit()
 
@@ -131,7 +170,4 @@ class ChannelRepository:
             await db.commit()
 
     async def close(self) -> None:
-        """Закрывает соединение с базой данных (если оно было установлено)"""
-        # В aiosqlite контекстный менеджер async with handles closing
-        # Добавим для явности, но по сути он может быть пустой
-        pass # Соединение управляется через async with 
+        pass 
