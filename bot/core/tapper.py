@@ -605,7 +605,9 @@ class GiveawayProcessor:
                     join_result = await self._bot.join_giveaway(giveaway_id, giveaway_title)
                     if join_result.get("success"):
                         if giveaway.get("validationStatus") == "Validated":
-                            self._bot._log('info', f'Присоединились к розыгрышу ⚡<y>{giveaway_title}</y>!', 'success')
+                            channel_names = [cv.get("channel") for cv in channels_to_process if cv.get("channel")]
+                            channel_info = f" на канале (<y>{channel_names[0]}</y>)" if channel_names else ""
+                            self._bot._log('info', f'Присоединились к розыгрышу ⚡<y>{giveaway_title}</y>{channel_info}!', 'success')
                             for channel_validation in channels_to_process:
                                  channel_name = channel_validation.get("channel")
                                  if channel_name:
@@ -613,7 +615,7 @@ class GiveawayProcessor:
                                       self._bot._log('debug', f'Время активности для канала <y>{channel_name}</y> обновлено после присоединения к розыгрышу <y>{giveaway_title}</y>.', 'debug')
                             await self._channel_repository.remove_pending_giveaway(session_name, giveaway_id)
                             await self._channel_repository.add_processed_giveaway(giveaway_id)
-                            return {"success": True, "message": f"Присоединились к розыгрышу {giveaway_title}"}
+                            return {"success": True, "message": f"Присоединились к розыгрышу {giveaway_title}{channel_info}"}
                         else:
                             message = f'Присоединились к розыгрышу <y>{giveaway_title}</y>, но его "validationStatus" не "Validated" (фактический статус: {giveaway.get("validationStatus")}).'
                             self._bot._log('warning', message, 'warning')
@@ -863,9 +865,11 @@ async def run_tapper(tg_client: Any) -> None:
                 await bot._random_delay()
 
                 if gifts_data.get("gifts"):
-                    уведомление_о_подарке = f"Обнаружен подарок на ` {session_name} `"
+                    session_name_md = escape_markdown(session_name)
+                    уведомление_о_подарке = f"Обнаружен подарок на `{session_name_md}`"
                     if settings.get('NOTIFICATION_CHAT_ID'):
-                        await bot._send_telegram_message(settings.NOTIFICATION_CHAT_ID, уведомление_о_подарке)
+                        result = await bot._send_telegram_message(settings.NOTIFICATION_CHAT_ID, уведомление_о_подарке)
+                        bot._log('debug', f'Результат отправки уведомления о подарке: {result}', 'info')
                     else:
                         bot._log('warning', 'NOTIFICATION_CHAT_ID не настроен. Уведомление о подарке не отправлено.', 'warning')
 
@@ -890,7 +894,7 @@ async def run_tapper(tg_client: Any) -> None:
         bot._log('error', f'Критическая ошибка в процессе выполнения: {e}', 'error')
         error_handler.handle_error(str(e))
     finally:
-        bot._log('info', ' Завершение функции run_tapper.', 'info')
+        bot._log('debug', ' Завершение функции run_tapper.', 'info')
         if update_task:
             update_task.cancel()
             try:
@@ -899,3 +903,7 @@ async def run_tapper(tg_client: Any) -> None:
                 bot._log('info', 'Задача автоматического обновления отменена.', 'info')
         await channel_repository.close()
         await bot.close()
+
+def escape_markdown(text: str) -> str:
+    escape_chars = r'_[]()~`>#+-=|{}.!'
+    return ''.join(['\\' + c if c in escape_chars else c for c in text])
