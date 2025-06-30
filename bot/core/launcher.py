@@ -15,7 +15,7 @@ from bot.utils.web import run_web_and_tunnel, stop_web_and_tunnel
 from bot.config import settings
 from bot.core.agents import generate_random_user_agent
 from bot.utils import logger, config_utils, proxy_utils, CONFIG_PATH, SESSIONS_PATH, PROXIES_PATH
-from bot.core.tapper import run_tapper
+from bot.core.tapper import run_tapper, BaseBot, escape_markdown
 from bot.core.registrator import register_sessions
 from bot.utils.updater import UpdateManager
 from bot.exceptions import InvalidSession
@@ -329,6 +329,14 @@ async def run_tasks() -> None:
         base_tasks.append(asyncio.create_task(update_manager.run()))
     
     tg_clients = await get_tg_clients()
+    # Отправка уведомления о запуске приложения
+    if hasattr(settings, 'NOTIFICATION_CHAT_ID') and settings.NOTIFICATION_CHAT_ID:
+        bot = BaseBot(None)
+        message = escape_markdown(f"✅ Приложение успешно запущено. Активных сессий: {len(tg_clients)}")
+        try:
+            asyncio.create_task(bot._send_telegram_message(settings.NOTIFICATION_CHAT_ID, message))
+        except Exception:
+            pass
     client_tasks = [asyncio.create_task(handle_tapper_session(tg_client=tg_client)) for tg_client in tg_clients]
     
     try:
