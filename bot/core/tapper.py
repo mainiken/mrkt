@@ -336,7 +336,7 @@ class BaseBot:
         self._log('debug', f'Попытка присоединиться к розыгрышу {giveaway_title or giveaway_id}', 'giveaway')
         try:
             result = await self._make_api_request('POST', url)
-            self._log('info', f'Запрос на присоединение к розыгрышу ⚡<y>{giveaway_title or giveaway_id}</y> отправлен.', 'success')
+            self._log('debug', f'Запрос на присоединение к розыгрышу ⚡<y>{giveaway_title or giveaway_id}</y> отправлен.', 'success')
             await self._random_delay()
             return {"success": True, "result": result}
         except Exception as e:
@@ -471,7 +471,7 @@ class GiveawayProcessor:
     ) -> bool:
         session_name = getattr(self._bot._tg_client, "session_name", "unknown_session")
         if await self._channel_repository.is_subscribed(session_name, channel_name):
-            self._bot._log('info', f'Канал <y>{channel_name}</y> уже в базе, пропускаем подписку.', 'success')
+            self._bot._log('debug', f'Канал <y>{channel_name}</y> уже в базе, пропускаем подписку.', 'success')
             await self._channel_repository.update_channel_activity(session_name, channel_name)
             return True
         if current_is_member_status == "Validated":
@@ -605,7 +605,7 @@ class GiveawayProcessor:
                     join_result = await self._bot.join_giveaway(giveaway_id, giveaway_title)
                     if join_result.get("success"):
                         if giveaway.get("validationStatus") == "Validated":
-                            self._bot._log('info', f'Успешно присоединились к розыгрышу ⚡<y>{giveaway_title}</y> (validationStatus: Validated)!', 'success')
+                            self._bot._log('info', f'Присоединились к розыгрышу ⚡<y>{giveaway_title}</y>!', 'success')
                             for channel_validation in channels_to_process:
                                  channel_name = channel_validation.get("channel")
                                  if channel_name:
@@ -613,7 +613,7 @@ class GiveawayProcessor:
                                       self._bot._log('debug', f'Время активности для канала <y>{channel_name}</y> обновлено после присоединения к розыгрышу <y>{giveaway_title}</y>.', 'debug')
                             await self._channel_repository.remove_pending_giveaway(session_name, giveaway_id)
                             await self._channel_repository.add_processed_giveaway(giveaway_id)
-                            return {"success": True, "message": f"Успешно присоединились к розыгрышу {giveaway_title}"}
+                            return {"success": True, "message": f"Присоединились к розыгрышу {giveaway_title}"}
                         else:
                             message = f'Присоединились к розыгрышу <y>{giveaway_title}</y>, но его "validationStatus" не "Validated" (фактический статус: {giveaway.get("validationStatus")}).'
                             self._bot._log('warning', message, 'warning')
@@ -654,7 +654,7 @@ class GiveawayProcessor:
 
         while True:
             if len(collected_giveaways) >= max_giveaways:
-                self._bot._log('info', f'Достигнут лимит ({max_giveaways}) на количество собираемых розыгрышей за проход. Сбор завершен.', 'giveaway')
+                self._bot._log('info', f'Достигнут лимит ({max_giveaways})', 'giveaway')
                 break
 
             page_count += 1
@@ -719,7 +719,7 @@ class GiveawayProcessor:
                 break
 
         filtered_giveaways = await self._filter_giveaways(collected_giveaways)
-        self._bot._log('info', f'Сбор и фильтрация завершены. Всего собрано и отфильтровано {len(filtered_giveaways)} подходящих розыгрышей.', 'giveaway')
+        self._bot._log('info', f'Отфильтровано {len(filtered_giveaways)} подходящих розыгрышей.', 'giveaway')
         return filtered_giveaways
 
     async def _add_filtered_giveaways_to_pending_db(self, giveaways: List[Dict[str, Any]]) -> None:
@@ -732,12 +732,12 @@ class GiveawayProcessor:
                    not await self._channel_repository.is_giveaway_pending(session_name, giveaway_id):
                     await self._channel_repository.add_pending_giveaway(session_name, giveaway_id, giveaway)
                     added_count += 1
-        self._bot._log('info', f'Добавлено {added_count} новых розыгрышей в очередь на обработку (pending).', 'giveaway')
+        self._bot._log('info', f'Добавлено {added_count} новых розыгрышей в очередь.', 'giveaway')
 
     async def _process_all_pending_giveaways(self) -> Dict[str, int]:
         session_name = getattr(self._bot._tg_client, "session_name", "unknown_session")
         pending_giveaways = await self._channel_repository.get_pending_giveaways(session_name)
-        self._bot._log('info', f'Начинаем обработку {len(pending_giveaways)} розыгрышей из очереди (pending).', 'giveaway')
+        self._bot._log('info', f'Начинаем обработку {len(pending_giveaways)} розыгрышей из очереди.', 'giveaway')
 
         successful_joins = 0
         failed_joins = 0
@@ -769,10 +769,10 @@ class GiveawayProcessor:
             )
 
             if not channels_to_leave:
-                self._bot._log('info', 'Нет неактивных каналов для отписки.', 'info')
+                self._bot._log('info', 'Нет неактивных каналов', 'info')
                 return 0
 
-            self._bot._log('info', f'Найдено {len(channels_to_leave)} неактивных каналов для отписки.', 'warning')
+            self._bot._log('info', f'Найдено {len(channels_to_leave)} неактивных каналов', 'warning')
 
             for channel_id, channel_name in channels_to_leave:
                 self._bot._log('debug', f'Попытка отписаться от канала <y>{channel_name}</y> (ID: {channel_id})...', 'warning')
@@ -851,12 +851,12 @@ async def run_tapper(tg_client: Any) -> None:
                 if settings.UNSUBSCRIBE_FROM_INACTIVE_CHANNELS:
                     channels_unsubscribed_cycle = await giveaway_processor.leave_inactive_channels()
                 else:
-                    bot._log('info', 'Отписка от неактивных каналов отключена в настройках.', 'info')
+                    bot._log('debug', 'Отписка от неактивных каналов отключена в настройках.', 'info')
 
                 bot._log('info', f'⭐ Цикл завершен. Результаты сессии ({session_name}):'
-                                 f' Успешно присоединились к {successful_joins_cycle} розыгрышам.'
-                                 f' Не удалось присоединиться к {failed_joins_cycle} розыгрышам.'
-                                 f' Отписались от {channels_unsubscribed_cycle} неактивных каналов.', 'info')
+                                 f' Успешно {successful_joins_cycle} розыгрыш.'
+                                 f' Не удалось {failed_joins_cycle}.'
+                                 f' Отписались {channels_unsubscribed_cycle}.', 'info')
                 
                 bot._log('debug', 'Проверка подарков...', 'giveaway')
                 gifts_data = await bot.get_gifts()
