@@ -467,28 +467,35 @@ class GiveawayProcessor:
         return filtered
 
     async def _check_and_fulfill_channel_validation(
-        self, giveaway_id: str, channel_name: str, current_is_member_status: str
+        self, giveaway_id: str, channel_name: str, current_is_member_status: str, giveaway_end_at: str = None
     ) -> bool:
         session_name = getattr(self._bot._tg_client, "session_name", "unknown_session")
-        if await self._channel_repository.is_subscribed(session_name, channel_name):
-            self._bot._log('debug', f'Канал <y>{channel_name}</y> уже в базе, пропускаем подписку.', 'success')
-            await self._channel_repository.update_channel_activity(session_name, channel_name)
-            return True
+        # Если статус Validated — подтверждаем, убираем timeout если был
         if current_is_member_status == "Validated":
             await self._channel_repository.add_channel(session_name, channel_name)
             await self._channel_repository.update_giveaway_participation_timestamp(
                 session_name, channel_name
             )
+            await self._channel_repository.remove_channel_timeout(session_name, channel_name, giveaway_id)
             self._bot._log('info', f' Подписка на канал <y>{channel_name}</y> подтверждена.', 'success')
             await self._channel_repository.update_channel_activity(session_name, channel_name)
             return True
-
+        # Если статус TimeOut — помечаем и возвращаем False (оставляем в pending)
+        if current_is_member_status == "TimeOut":
+            if giveaway_end_at is None:
+                giveaway_end_at = (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat()
+            await self._channel_repository.mark_channel_timeout(session_name, channel_name, giveaway_id, giveaway_end_at)
+            self._bot._log('warning', f'Канал <y>{channel_name}</y> в статусе TimeOut, отложим повторную проверку.', 'warning')
+            return False
+        # Если канал уже в базе и не TimeOut/Validated — только обновляем активность
+        if await self._channel_repository.is_subscribed(session_name, channel_name):
+            self._bot._log('debug', f'Канал <y>{channel_name}</y> уже в базе, пропускаем подписку.', 'success')
+            await self._channel_repository.update_channel_activity(session_name, channel_name)
+            return True
         if hasattr(settings, 'GIVEAWAY_SKIP_CHANNEL_SUBSCRIBE_REQUIRED') and settings.GIVEAWAY_SKIP_CHANNEL_SUBSCRIBE_REQUIRED:
             self._bot._log('debug', f'Пропускаем проверку подписки на канал <y>{channel_name}</y> по настройке.', 'info')
             return False
-
         self._bot._log('debug', f'Попытка подписаться на канал <y>{channel_name}</y>', 'debug')
-
         try:
             await self._bot._check_and_apply_rate_limit("subscribe")
             channel_join_success = await self._bot._tg_client.join_telegram_channel(
@@ -497,46 +504,44 @@ class GiveawayProcessor:
             if not channel_join_success:
                 self._bot._log('info', f'Не удалось вступить в канал <y>{channel_name}</y>.', 'warning')
                 return False
-
             self._bot._log('info', f' Вступление в канал <y>{channel_name}</y> успешно.', 'success')
             await self._channel_repository.add_channel(session_name, channel_name)
-
             if hasattr(settings, 'CHANNEL_SUBSCRIBE_DELAY'):
                  pass
-
-
             start_validation_result = await self._bot.start_giveaway_validation(
                 giveaway_id, channel_name, "ChannelMember"
             )
             if start_validation_result.get("status") != "Success":
                 self._bot._log('info', f'Серверная валидация канала <y>{channel_name}</y> не запущена: {start_validation_result.get("message")}', 'warning')
-
-            max_retries = 5
-            base_delay = 5
-
+            max_retries = 10
+            min_delay = 360
+            max_delay = 7200
             for attempt in range(max_retries):
-                delay = base_delay + attempt * random.uniform(1, 3)
+                # Интервал увеличивается от min_delay до max_delay
+                delay = min_delay + (max_delay - min_delay) * attempt // (max_retries - 1)
                 await asyncio.sleep(delay)
-
                 validations_after_sub = await self._bot.check_giveaway_validations(giveaway_id)
                 updated_is_member_status = next(
                     (cv.get("isMember") for cv in validations_after_sub.get("channelValidations", []) if cv["channel"] == channel_name),
                     None
                 )
-
                 if updated_is_member_status == "Validated":
                     await self._channel_repository.update_channel_activity(session_name, channel_name)
                     await self._channel_repository.update_giveaway_participation_timestamp(
                         session_name, channel_name
                     )
+                    await self._channel_repository.remove_channel_timeout(session_name, channel_name, giveaway_id)
                     self._bot._log('info', f' Подписка на канал <y>{channel_name}</y> подтверждена.', 'success')
                     return True
-
-                self._bot._log('debug', f'Попытка {attempt+1}/{max_retries}: подписка на канале <y>{channel_name}</y> не подтверждена ( статус: {updated_is_member_status}), ждем {delay:.2f} сек.', 'debug')
-
+                if updated_is_member_status == "TimeOut":
+                    if giveaway_end_at is None:
+                        giveaway_end_at = (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat()
+                    await self._channel_repository.mark_channel_timeout(session_name, channel_name, giveaway_id, giveaway_end_at)
+                    self._bot._log('warning', f'Канал <y>{channel_name}</y> в статусе TimeOut, отложим повторную проверку.', 'warning')
+                    return False
+                self._bot._log('debug', f'Попытка {attempt+1}/{max_retries}: подписка на канале <y>{channel_name}</y> не подтверждена ( статус: {updated_is_member_status}), ждем {delay} сек.', 'debug')
             self._bot._log('info', f' Не удалось подтвердить подписку на канале <y>{channel_name}</y> после {max_retries} попыток.', 'error')
             return False
-
         except ValueError as ve:
             self._bot._log('info', f'Ошибка при вступлении в канал <y>{channel_name}</y>: {ve}', 'warning')
             return False
@@ -834,6 +839,8 @@ async def run_tapper(tg_client: Any) -> None:
         giveaway_processor = GiveawayProcessor(bot, channel_repository)
 
         while True:
+            # Очищаем истёкшие timeout-ы каналов перед каждым циклом
+            await channel_repository.clear_expired_timeouts()
             successful_joins_cycle = 0
             failed_joins_cycle = 0
             channels_unsubscribed_cycle = 0

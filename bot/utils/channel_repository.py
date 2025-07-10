@@ -33,6 +33,17 @@ class ChannelRepository:
                 "PRIMARY KEY (session_name, giveaway_id))"
             )
             await db.commit()
+            # Новая таблица для каналов в статусе timeout
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS channel_timeouts ("
+                "session_name TEXT NOT NULL, "
+                "channel_name TEXT NOT NULL, "
+                "giveaway_id TEXT NOT NULL, "
+                "timeout_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                "giveaway_end_at TIMESTAMP NOT NULL, "
+                "PRIMARY KEY (session_name, channel_name, giveaway_id))"
+            )
+            await db.commit()
 
     async def is_subscribed(self, session_name: str, channel_name: str) -> bool:
         async with aiosqlite.connect(self._db_path) as db:
@@ -166,6 +177,39 @@ class ChannelRepository:
             await db.execute(
                 "DELETE FROM subscribed_channels WHERE session_name = ? AND giveaway_participation_at IS NULL",
                 (session_name,)
+            )
+            await db.commit()
+
+    async def mark_channel_timeout(self, session_name: str, channel_name: str, giveaway_id: str, giveaway_end_at: str) -> None:
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO channel_timeouts (session_name, channel_name, giveaway_id, timeout_at, giveaway_end_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)",
+                (session_name, channel_name, giveaway_id, giveaway_end_at)
+            )
+            await db.commit()
+
+    async def is_channel_timeout(self, session_name: str, channel_name: str, giveaway_id: str) -> bool:
+        async with aiosqlite.connect(self._db_path) as db:
+            cursor = await db.execute(
+                "SELECT 1 FROM channel_timeouts WHERE session_name = ? AND channel_name = ? AND giveaway_id = ?",
+                (session_name, channel_name, giveaway_id)
+            )
+            result = await cursor.fetchone()
+            await cursor.close()
+            return result is not None
+
+    async def remove_channel_timeout(self, session_name: str, channel_name: str, giveaway_id: str) -> None:
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "DELETE FROM channel_timeouts WHERE session_name = ? AND channel_name = ? AND giveaway_id = ?",
+                (session_name, channel_name, giveaway_id)
+            )
+            await db.commit()
+
+    async def clear_expired_timeouts(self) -> None:
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "DELETE FROM channel_timeouts WHERE giveaway_end_at < CURRENT_TIMESTAMP"
             )
             await db.commit()
 
